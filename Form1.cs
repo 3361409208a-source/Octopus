@@ -201,18 +201,9 @@ public partial class Form1 : Form
             {
                 var robotMenu = new ToolStripMenuItem($"{robot.Name} (#{robot.Id})");
                 
-                // 子菜单：显示/隐藏终端
-                if (robot.Terminal != null && !robot.Terminal.IsDisposed)
-                {
-                    robotMenu.DropDownItems.Add("📺 显示终端", null, (s, e) => robot.Terminal.ShowCmdWindow());
-                    robotMenu.DropDownItems.Add("🗕 隐藏终端", null, (s, e) => robot.Terminal.HideCmdWindow());
-                    robotMenu.DropDownItems.Add(new ToolStripSeparator());
-                    robotMenu.DropDownItems.Add("❌ 关闭终端", null, (s, e) => robot.Terminal?.Close());
-                }
-                else
-                {
-                    robotMenu.DropDownItems.Add("📺 打开终端", null, (s, e) => robot.OpenTerminal());
-                }
+                // 终端菜单
+                robotMenu.DropDownItems.Add("📺 打开终端", null, (s, e) => robot.OpenTerminal());
+                robotMenu.DropDownItems.Add("🗕 关闭终端", null, (s, e) => robot.CloseTerminal());
                 
                 robotMenu.DropDownItems.Add(new ToolStripSeparator());
                 
@@ -253,7 +244,6 @@ public partial class Form1 : Form
         controlMenu.DropDownItems.Add(new ToolStripSeparator());
         controlMenu.DropDownItems.Add("全部清除", null, (s, e) =>
         {
-            foreach (var r in _robots) r.Terminal?.Close();
             _robots.Clear();
         });
         menu.Items.Add(controlMenu);
@@ -443,7 +433,6 @@ public partial class Form1 : Form
 
     private void ExitApplication()
     {
-        foreach (var r in _robots) r.Terminal?.Close();
         _notifyIcon?.Dispose();
         _controlPanel?.Close();
         _settingsForm?.Close();
@@ -536,7 +525,6 @@ public partial class Form1 : Form
 
     public void ClearAllRobots()
     {
-        foreach (var r in _robots) r.Terminal?.Close();
         _robots.Clear();
     }
 
@@ -588,8 +576,6 @@ public partial class Form1 : Form
     {
         _moveTimer?.Stop();
         _moveTimer?.Dispose();
-
-        foreach (var r in _robots) r.Terminal?.Close();
 
         _notifyIcon?.Dispose();
         base.OnFormClosing(e);

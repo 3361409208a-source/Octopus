@@ -142,11 +142,8 @@ public class ControlPanelForm : Form
                 var robot = _robotListView.SelectedItems[0].Tag as Robot;
                 if (robot != null)
                 {
-                    contextMenu.Items.Add("📺 打开/显示终端", null, (s2, e2) => robot.OpenTerminal());
-                    if (robot.Terminal != null && !robot.Terminal.IsDisposed)
-                    {
-                        contextMenu.Items.Add("🗕 隐藏终端", null, (s2, e2) => robot.Terminal.HideTerminal());
-                    }
+                    contextMenu.Items.Add("📺 打开终端", null, (s2, e2) => robot.OpenTerminal());
+                    contextMenu.Items.Add("🗕 关闭终端", null, (s2, e2) => robot.CloseTerminal());
                     contextMenu.Items.Add(new ToolStripSeparator());
                     var status = robot.IsMoving ? "⏸ 暂停" : "▶ 启动";
                     contextMenu.Items.Add(status, null, (s2, e2) => robot.IsMoving = !robot.IsMoving);
@@ -188,16 +185,9 @@ public class ControlPanelForm : Form
             item.SubItems.Add(robot.Name);
             item.SubItems.Add(robot.IsMoving ? "▶ 移动中" : "⏸ 已暂停");
             
-            // 检查终端状态
-            string terminalStatus = "✗ 未打开";
-            string visibleStatus = "-";
-            if (robot.Terminal != null && !robot.Terminal.IsDisposed)
-            {
-                terminalStatus = robot.Terminal.IsCmdRunning() ? "✓ 运行中" : "⏸ 已停止";
-                visibleStatus = robot.Terminal.IsCmdVisible() ? "👁️ 显示" : "🗕 隐藏";
-            }
-            item.SubItems.Add(terminalStatus);
-            item.SubItems.Add(visibleStatus);
+            // 终端状态（统一管理，不再单独显示）
+            item.SubItems.Add("-");
+            item.SubItems.Add("-");
             
             item.SubItems.Add($"({robot.X:F0}, {robot.Y:F0})");
             item.SubItems.Add($"{robot.SpeedMultiplier:F1}x");

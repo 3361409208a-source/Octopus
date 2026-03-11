@@ -41,9 +41,6 @@ public class Robot
     public int ChangeDirectionTimer { get; set; } = 0;
     public Random Rand { get; set; } = new Random();
 
-    // 绑定的终端
-    public TerminalForm? Terminal { get; set; }
-
     // 颜色主题
     public Color PrimaryColor { get; set; }
     public Color SecondaryColor { get; set; }
@@ -161,31 +158,14 @@ public class Robot
 
     public void OpenTerminal()
     {
-        if (Terminal == null || Terminal.IsDisposed)
-        {
-            Terminal = new TerminalForm(this);
-            Terminal.Show();
-
-            Terminal.FormClosed += (s, e) =>
-            {
-                Terminal = null;
-                IsMoving = true;
-            };
-        }
-        else
-        {
-            // 终端存在，显示窗口
-            Terminal.ShowTerminal();
-        }
+        // 使用统一的终端管理器
+        TerminalManagerForm.Instance.OpenTerminal(this);
     }
     
     public void CloseTerminal()
     {
-        if (Terminal != null && !Terminal.IsDisposed)
-        {
-            // 隐藏终端窗口
-            Terminal.HideTerminal();
-        }
+        // 关闭该机器人的终端标签页
+        TerminalManagerForm.Instance.CloseTerminal(this);
     }
 }
 
