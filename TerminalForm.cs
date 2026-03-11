@@ -11,11 +11,14 @@ public class TerminalForm : Form
     private Robot _robot;
     private Process? _cmdProcess;
     private IntPtr _cmdHwnd = IntPtr.Zero;
-    private NotifyIcon? _trayIcon;
-    private bool _allowClose = false;
-    private System.Windows.Forms.Timer? _monitorTimer;
+    private Panel _terminalPanel;
+    private Label _titleLabel;
+    private Button _closeButton;
 
     // Win32 API
+    [DllImport("user32.dll")]
+    private static extern IntPtr SetParent(IntPtr hWndChild, IntPtr hWndNewParent);
+
     [DllImport("user32.dll")]
     private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 
@@ -26,59 +29,138 @@ public class TerminalForm : Form
     private static extern bool SetForegroundWindow(IntPtr hWnd);
 
     [DllImport("user32.dll")]
-    private static extern bool IsWindowVisible(IntPtr hWnd);
+    private static extern bool MoveWindow(IntPtr hWnd, int X, int Y, int nWidth, int nHeight, bool bRepaint);
 
     [DllImport("user32.dll")]
-    private static extern IntPtr SetWindowLongPtr(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
+    private static extern int GetWindowLong(IntPtr hWnd, int nIndex);
 
     [DllImport("user32.dll")]
-    private static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
+    private static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
 
     [DllImport("user32.dll")]
-    private static extern IntPtr CallWindowProc(IntPtr lpPrevWndFunc, IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+    private static extern bool SetFocus(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+    [DllImport("kernel32.dll")]
+    private static extern uint GetCurrentThreadId();
+
+    [DllImport("user32.dll")]
+    private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
 
     private const int SW_HIDE = 0;
     private const int SW_SHOW = 5;
-    private const int SW_RESTORE = 9;
-    private const int GWL_WNDPROC = -4;
-    private const uint WM_CLOSE = 0x0010;
-
-    private IntPtr _originalWndProc = IntPtr.Zero;
-    private WndProcDelegate? _newWndProc;
-
-    private delegate IntPtr WndProcDelegate(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+    private const int GWL_STYLE = -16;
+    private const int WS_BORDER = 0x00800000;
+    private const int WS_CAPTION = 0x00C00000;
+    private const int WS_CHILD = 0x40000000;
+    private const int WS_VISIBLE = 0x10000000;
 
     public TerminalForm(Robot robot)
     {
         _robot = robot;
         InitializeComponent();
-        InitializeTrayIcon();
         StartCmdProcess();
-        StartMonitoring();
     }
 
     private void InitializeComponent()
     {
-        // 这个窗口只用于管理，不显示界面
-        this.Text = $"🤖 {_robot.Name} - Terminal Manager";
-        this.Size = new Size(1, 1);
-        this.StartPosition = FormStartPosition.Manual;
-        this.Location = new Point(-10000, -10000);
-        this.ShowInTaskbar = false;
-        this.FormBorderStyle = FormBorderStyle.None;
-        this.Opacity = 0;
+        // 窗口设置
+        this.Text = $"🤖 {_robot.Name} - Terminal";
+        this.Size = new Size(800, 600);
+        this.StartPosition = FormStartPosition.CenterScreen;
+        this.BackColor = Color.FromArgb(30, 30, 30);
+        this.MinimumSize = new Size(400, 300);
 
+        // 标题栏
+        _titleLabel = new Label
+        {
+            Text = $"🤖 {_robot.Name} - Integrated Terminal",
+            Dock = DockStyle.Top,
+            Height = 40,
+            Font = new Font("Microsoft YaHei", 12, FontStyle.Bold),
+            ForeColor = Color.Lime,
+            TextAlign = ContentAlignment.MiddleLeft,
+            BackColor = Color.FromArgb(40, 40, 40),
+            Padding = new Padding(10, 0, 0, 0)
+        };
+
+        // 关闭按钮
+        _closeButton = new Button
+        {
+            Text = "✕",
+            Size = new Size(40, 40),
+            Location = new Point(this.ClientSize.Width - 40, 0),
+            Anchor = AnchorStyles.Top | AnchorStyles.Right,
+            FlatStyle = FlatStyle.Flat,
+            BackColor = Color.FromArgb(40, 40, 40),
+            ForeColor = Color.White,
+            Font = new Font("Arial", 14, FontStyle.Bold),
+            Cursor = Cursors.Hand
+        };
+        _closeButton.FlatAppearance.BorderSize = 0;
+        _closeButton.Click += (s, e) => this.Hide();
+        _closeButton.MouseEnter += (s, e) => _closeButton.BackColor = Color.Red;
+        _closeButton.MouseLeave += (s, e) => _closeButton.BackColor = Color.FromArgb(40, 40, 40);
+
+        // 终端容器面板
+        _terminalPanel = new Panel
+        {
+            Dock = DockStyle.Fill,
+            BackColor = Color.Black,
+            BorderStyle = BorderStyle.None
+        };
+        
+        // 点击面板时设置焦点到 CMD 窗口
+        _terminalPanel.Click += (s, e) =>
+        {
+            if (_cmdHwnd != IntPtr.Zero)
+            {
+                AttachInputThreads();
+                SetFocus(_cmdHwnd);
+            }
+        };
+
+        this.Controls.Add(_terminalPanel);
+        this.Controls.Add(_titleLabel);
+        this.Controls.Add(_closeButton);
+
+        // 窗口事件
         this.FormClosing += TerminalForm_FormClosing;
+        this.Resize += TerminalForm_Resize;
+        this.Shown += TerminalForm_Shown;
+        this.Activated += TerminalForm_Activated;
     }
 
-    private void InitializeTrayIcon()
+    private void TerminalForm_Activated(object? sender, EventArgs e)
     {
-        _trayIcon = new NotifyIcon
+        // 窗口激活时，重新连接输入队列并设置焦点
+        if (_cmdHwnd != IntPtr.Zero)
         {
-            Text = $"🤖 {_robot.Name} - Terminal",
-            Icon = SystemIcons.Application,
-            Visible = false  // 不显示托盘图标
-        };
+            AttachInputThreads();
+            SetFocus(_cmdHwnd);
+        }
+    }
+
+    private void TerminalForm_Shown(object? sender, EventArgs e)
+    {
+        // 窗口显示后，嵌入CMD窗口
+        if (_cmdHwnd != IntPtr.Zero)
+        {
+            EmbedCmdWindow();
+            // 设置焦点到 CMD 窗口
+            SetFocus(_cmdHwnd);
+        }
+    }
+
+    private void TerminalForm_Resize(object? sender, EventArgs e)
+    {
+        // 窗口大小改变时，调整CMD窗口大小
+        if (_cmdHwnd != IntPtr.Zero && _terminalPanel != null)
+        {
+            MoveWindow(_cmdHwnd, 0, 0, _terminalPanel.Width, _terminalPanel.Height, true);
+        }
     }
 
     private void StartCmdProcess()
@@ -108,16 +190,12 @@ public class TerminalForm : Form
                 "echo Robot Commands:\n" +
                 "echo   robot-name    - Show robot name\n" +
                 "echo   robot-status  - Show robot status\n" +
-                "echo   robot-resume  - Resume robot movement\n" +
-                "echo   robot-stop    - Stop robot movement\n" +
                 "echo.\n" +
                 "echo Type 'exit' to close terminal\n" +
                 "echo ==========================================\n" +
                 "echo.\n" +
                 "doskey robot-name=echo Name: " + _robot.Name + " ^& echo ID: " + _robot.Id + "\n" +
                 "doskey robot-status=type \"" + statusFile + "\" 2^>nul ^|^| echo Status file not found\n" +
-                "doskey robot-resume=echo Robot movement resumed\n" +
-                "doskey robot-stop=echo Robot movement stopped\n" +
                 "\n" +
                 $"prompt [{_robot.Name}]$G \n" +
                 "cmd /k\n";
@@ -140,26 +218,24 @@ public class TerminalForm : Form
             _cmdProcess.Start();
 
             // 等待窗口创建并获取句柄
-            System.Threading.Tasks.Task.Delay(800).ContinueWith(_ =>
+            System.Threading.Tasks.Task.Delay(500).ContinueWith(_ =>
             {
                 this.Invoke(new Action(() =>
                 {
                     FindCmdWindow(windowTitle);
-                    if (_cmdHwnd != IntPtr.Zero)
+                    if (_cmdHwnd != IntPtr.Zero && this.Visible)
                     {
-                        HookCmdWindow();
+                        EmbedCmdWindow();
                     }
                 }));
             });
 
             _cmdProcess.Exited += (s, e) =>
             {
-                // CMD进程退出时，只是标记为已退出
                 this.Invoke(new Action(() =>
                 {
                     _cmdHwnd = IntPtr.Zero;
                     _cmdProcess = null;
-                    UnhookCmdWindow();
                 }));
             };
         }
@@ -187,103 +263,61 @@ public class TerminalForm : Form
         }
     }
 
-    private void HookCmdWindow()
+    private void EmbedCmdWindow()
     {
-        if (_cmdHwnd == IntPtr.Zero) return;
+        if (_cmdHwnd == IntPtr.Zero || _terminalPanel == null) return;
 
         try
         {
-            // 创建新的窗口过程委托
-            _newWndProc = new WndProcDelegate(CmdWindowProc);
+            // 将CMD窗口设置为子窗口
+            SetParent(_cmdHwnd, _terminalPanel.Handle);
+
+            // 移除边框和标题栏
+            int style = GetWindowLong(_cmdHwnd, GWL_STYLE);
+            style &= ~WS_CAPTION;  // 移除标题栏
+            style &= ~WS_BORDER;   // 移除边框
+            style |= WS_CHILD;     // 设置为子窗口
+            SetWindowLong(_cmdHwnd, GWL_STYLE, style);
+
+            // 调整大小以填充面板
+            MoveWindow(_cmdHwnd, 0, 0, _terminalPanel.Width, _terminalPanel.Height, true);
+
+            // 显示窗口
+            ShowWindow(_cmdHwnd, SW_SHOW);
             
-            // 保存原始窗口过程并设置新的
-            _originalWndProc = GetWindowLongPtr(_cmdHwnd, GWL_WNDPROC);
-            SetWindowLongPtr(_cmdHwnd, GWL_WNDPROC, Marshal.GetFunctionPointerForDelegate(_newWndProc));
+            // 关键：连接输入队列以支持键盘输入
+            AttachInputThreads();
+            
+            // 设置焦点到 CMD 窗口
+            SetFocus(_cmdHwnd);
         }
-        catch
+        catch (Exception ex)
         {
-            // Hook失败，使用监控方式
+            System.Diagnostics.Debug.WriteLine($"Failed to embed CMD window: {ex.Message}");
         }
     }
 
-    private void UnhookCmdWindow()
+    private void AttachInputThreads()
     {
-        if (_cmdHwnd != IntPtr.Zero && _originalWndProc != IntPtr.Zero)
+        try
         {
-            try
+            // 获取当前线程 ID
+            uint currentThreadId = GetCurrentThreadId();
+            
+            // 获取 CMD 窗口的线程 ID
+            uint cmdThreadId = GetWindowThreadProcessId(_cmdHwnd, out _);
+            
+            if (currentThreadId != cmdThreadId)
             {
-                SetWindowLongPtr(_cmdHwnd, GWL_WNDPROC, _originalWndProc);
+                // 连接两个线程的输入队列
+                AttachThreadInput(cmdThreadId, currentThreadId, true);
+                System.Diagnostics.Debug.WriteLine($"Attached input threads: CMD={cmdThreadId}, Current={currentThreadId}");
             }
-            catch { }
         }
-        _originalWndProc = IntPtr.Zero;
-        _newWndProc = null;
-    }
-
-    private IntPtr CmdWindowProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam)
-    {
-        // 拦截关闭消息
-        if (msg == WM_CLOSE)
+        catch (Exception ex)
         {
-            // 隐藏窗口而不是关闭
-            ShowWindow(hWnd, SW_HIDE);
-            return IntPtr.Zero;
+            System.Diagnostics.Debug.WriteLine($"Failed to attach input threads: {ex.Message}");
         }
-
-        // 调用原始窗口过程
-        return CallWindowProc(_originalWndProc, hWnd, msg, wParam, lParam);
-    }
-
-    private void StartMonitoring()
-    {
-        // 启动监控定时器，检测CMD窗口状态
-        _monitorTimer = new System.Windows.Forms.Timer();
-        _monitorTimer.Interval = 500;
-        _monitorTimer.Tick += (s, e) =>
-        {
-            if (_cmdHwnd != IntPtr.Zero && _cmdProcess != null && !_cmdProcess.HasExited)
-            {
-                // 检查窗口是否可见
-                // 如果窗口被用户关闭，我们可以在这里检测到
-            }
-        };
-        _monitorTimer.Start();
-    }
-
-    public void ShowCmdWindow()
-    {
-        // 如果CMD进程已退出，重新启动
-        if (_cmdProcess == null || _cmdProcess.HasExited)
-        {
-            StartCmdProcess();
-        }
-        else if (_cmdHwnd != IntPtr.Zero)
-        {
-            ShowWindow(_cmdHwnd, SW_RESTORE);
-            SetForegroundWindow(_cmdHwnd);
-        }
-    }
-
-    public void HideCmdWindow()
-    {
-        if (_cmdHwnd != IntPtr.Zero && _cmdProcess != null && !_cmdProcess.HasExited)
-        {
-            ShowWindow(_cmdHwnd, SW_HIDE);
-        }
-    }
-
-    public bool IsCmdRunning()
-    {
-        return _cmdProcess != null && !_cmdProcess.HasExited;
-    }
-
-    public bool IsCmdVisible()
-    {
-        if (_cmdHwnd != IntPtr.Zero && _cmdProcess != null && !_cmdProcess.HasExited)
-        {
-            return IsWindowVisible(_cmdHwnd);
-        }
-        return false;
     }
 
     private void UpdateStatusFile(string statusFile)
@@ -302,25 +336,67 @@ public class TerminalForm : Form
         catch { }
     }
 
+    public void ShowTerminal()
+    {
+        if (!this.Visible)
+        {
+            this.Show();
+            if (_cmdHwnd != IntPtr.Zero)
+            {
+                ShowWindow(_cmdHwnd, SW_SHOW);
+                AttachInputThreads();
+                SetFocus(_cmdHwnd);
+            }
+        }
+        else
+        {
+            this.Activate();
+            if (_cmdHwnd != IntPtr.Zero)
+            {
+                AttachInputThreads();
+                SetFocus(_cmdHwnd);
+            }
+        }
+    }
+
+    public void HideTerminal()
+    {
+        this.Hide();
+    }
+
+    public bool IsCmdRunning()
+    {
+        return _cmdProcess != null && !_cmdProcess.HasExited;
+    }
+
+    public bool IsCmdVisible()
+    {
+        return this.Visible;
+    }
+
+    // 兼容旧代码的方法
+    public void ShowCmdWindow()
+    {
+        ShowTerminal();
+    }
+
+    public void HideCmdWindow()
+    {
+        HideTerminal();
+    }
+
     private void TerminalForm_FormClosing(object? sender, FormClosingEventArgs e)
     {
-        // 如果不是允许关闭，则取消
-        if (!_allowClose && e.CloseReason == CloseReason.UserClosing)
+        // 阻止关闭，改为隐藏
+        if (e.CloseReason == CloseReason.UserClosing)
         {
             e.Cancel = true;
+            this.Hide();
             return;
         }
 
         // 真正关闭时的清理
-        _monitorTimer?.Stop();
-        _monitorTimer?.Dispose();
-        _trayIcon?.Dispose();
-
-        // 恢复机器人移动
         _robot.IsMoving = true;
-
-        // 取消Hook
-        UnhookCmdWindow();
 
         // 关闭 CMD 进程
         try

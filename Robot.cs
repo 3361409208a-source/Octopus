@@ -174,8 +174,17 @@ public class Robot
         }
         else
         {
-            // 终端存在，显示CMD窗口
-            Terminal.ShowCmdWindow();
+            // 终端存在，显示窗口
+            Terminal.ShowTerminal();
+        }
+    }
+    
+    public void CloseTerminal()
+    {
+        if (Terminal != null && !Terminal.IsDisposed)
+        {
+            // 隐藏终端窗口
+            Terminal.HideTerminal();
         }
     }
 }

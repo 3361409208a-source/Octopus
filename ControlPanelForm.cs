@@ -56,6 +56,7 @@ public class ControlPanelForm : Form
         _robotListView.Columns.Add("名称", 120);
         _robotListView.Columns.Add("状态", 80);
         _robotListView.Columns.Add("终端", 80);
+        _robotListView.Columns.Add("可见", 60);
         _robotListView.Columns.Add("位置", 120);
         _robotListView.Columns.Add("速度", 80);
         _robotListView.Columns.Add("大小", 60);
@@ -144,8 +145,7 @@ public class ControlPanelForm : Form
                     contextMenu.Items.Add("📺 打开/显示终端", null, (s2, e2) => robot.OpenTerminal());
                     if (robot.Terminal != null && !robot.Terminal.IsDisposed)
                     {
-                        contextMenu.Items.Add("🗕 隐藏终端", null, (s2, e2) => robot.Terminal.HideCmdWindow());
-                        contextMenu.Items.Add("❌ 关闭终端", null, (s2, e2) => robot.Terminal?.Close());
+                        contextMenu.Items.Add("🗕 隐藏终端", null, (s2, e2) => robot.Terminal.HideTerminal());
                     }
                     contextMenu.Items.Add(new ToolStripSeparator());
                     var status = robot.IsMoving ? "⏸ 暂停" : "▶ 启动";
@@ -190,11 +190,14 @@ public class ControlPanelForm : Form
             
             // 检查终端状态
             string terminalStatus = "✗ 未打开";
+            string visibleStatus = "-";
             if (robot.Terminal != null && !robot.Terminal.IsDisposed)
             {
                 terminalStatus = robot.Terminal.IsCmdRunning() ? "✓ 运行中" : "⏸ 已停止";
+                visibleStatus = robot.Terminal.IsCmdVisible() ? "👁️ 显示" : "🗕 隐藏";
             }
             item.SubItems.Add(terminalStatus);
+            item.SubItems.Add(visibleStatus);
             
             item.SubItems.Add($"({robot.X:F0}, {robot.Y:F0})");
             item.SubItems.Add($"{robot.SpeedMultiplier:F1}x");
