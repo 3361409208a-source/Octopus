@@ -75,17 +75,14 @@ public class TerminalManagerForm : Form
             this.Show();
             this.Activate();
             
-            // 使用 Application.DoEvents 确保 UI 更新完成
+            // 确保窗口和标签页完全显示后再启动终端
             Application.DoEvents();
             
-            // 等待更长时间确保标签页完全显示
-            System.Threading.Tasks.Task.Delay(300).ContinueWith(_ =>
+            // 使用 BeginInvoke 在消息队列处理完后执行
+            this.BeginInvoke(new Action(() =>
             {
-                this.Invoke(new Action(() =>
-                {
-                    tab.StartTerminal();
-                }));
-            });
+                tab.StartTerminal();
+            }));
         }
     }
 
@@ -207,6 +204,12 @@ public class TerminalTab : IDisposable
 
         _terminalPanel.Click += (s, e) => FocusTerminal();
         _terminalPanel.Resize += (s, e) => ResizeTerminal();
+        
+        // 确保 Panel 句柄被创建
+        if (!_terminalPanel.IsHandleCreated)
+        {
+            var handle = _terminalPanel.Handle; // 强制创建句柄
+        }
 
         _tabPage.Controls.Add(_terminalPanel);
     }
@@ -215,6 +218,12 @@ public class TerminalTab : IDisposable
     {
         try
         {
+            // 确保 Panel 句柄已创建
+            if (!_terminalPanel.IsHandleCreated)
+            {
+                var handle = _terminalPanel.Handle;
+            }
+            
             string tempDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "RobotTerminals");
             System.IO.Directory.CreateDirectory(tempDir);
             string batchFile = System.IO.Path.Combine(tempDir, $"robot_{_robot.Id}.bat");
@@ -251,22 +260,29 @@ public class TerminalTab : IDisposable
                     Arguments = $"/c \"{batchFile}\"",
                     UseShellExecute = true,
                     CreateNoWindow = false,
-                    WindowStyle = ProcessWindowStyle.Normal  // 正常启动
+                    WindowStyle = ProcessWindowStyle.Normal
                 },
                 EnableRaisingEvents = true
             };
 
             _cmdProcess.Start();
 
-            // 等待窗口创建，然后嵌入
-            System.Threading.Tasks.Task.Delay(600).ContinueWith(_ =>
+            // 等待窗口创建，然后嵌入 - 增加等待时间到 800ms
+            System.Threading.Tasks.Task.Delay(800).ContinueWith(_ =>
             {
-                if (_terminalPanel.IsHandleCreated)
+                if (_terminalPanel != null && _terminalPanel.IsHandleCreated && !_terminalPanel.IsDisposed)
                 {
-                    _terminalPanel.Invoke(new Action(() =>
+                    try
                     {
-                        FindAndEmbedCmdWindow(windowTitle);
-                    }));
+                        _terminalPanel.Invoke(new Action(() =>
+                        {
+                            FindAndEmbedCmdWindow(windowTitle);
+                        }));
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[{_robot.Name}] Error invoking embed: {ex.Message}");
+                    }
                 }
             });
 
