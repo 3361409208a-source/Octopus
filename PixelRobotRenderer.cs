@@ -32,8 +32,44 @@ public static class PixelRobotRenderer
         DrawEyes(g, robot, centerX, centerY);
         DrawAntenna(g, robot, centerX, centerY);
         DrawName(g, robot);
+        DrawAlertBubble(g, robot);
 
         g.Restore(state);
+    }
+
+    private static void DrawAlertBubble(Graphics g, Robot robot)
+    {
+        if (!robot.IsWarning || string.IsNullOrEmpty(robot.AlertMessage)) return;
+
+        // 浮动动画
+        float floatOffset = (float)Math.Sin(robot.WarningTimer * 0.1) * 5;
+        float bx = robot.X + robot.Size / 2;
+        float by = robot.Y - 40 + floatOffset;
+
+        using var font = new Font("Consolas", 9, FontStyle.Bold);
+        var size = g.MeasureString(robot.AlertMessage, font);
+        
+        // 气泡背景 (带圆角和阴影)
+        RectangleF bubbleRect = new RectangleF(bx - size.Width / 2 - 8, by - size.Height / 2 - 4, size.Width + 16, size.Height + 8);
+        
+        using var shadowBrush = new SolidBrush(Color.FromArgb(100, 0, 0, 0));
+        g.FillRectangle(shadowBrush, bubbleRect.X + 3, bubbleRect.Y + 3, bubbleRect.Width, bubbleRect.Height);
+
+        // 颜色根据状态变化：Claude 确认显示黄色，错误显示红色
+        Color bubbleColor = robot.StatusMessage == "WAITING" ? Color.Gold : Color.Red;
+        using var bubbleBrush = new SolidBrush(bubbleColor);
+        g.FillRectangle(bubbleBrush, bubbleRect);
+
+        using var textBrush = new SolidBrush(Color.Black);
+        g.DrawString(robot.AlertMessage, font, textBrush, bx, by, new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center });
+
+        // 连接宠物的小箭头
+        PointF[] arrow = {
+            new PointF(bx - 5, bubbleRect.Bottom),
+            new PointF(bx + 5, bubbleRect.Bottom),
+            new PointF(bx, bubbleRect.Bottom + 8)
+        };
+        g.FillPolygon(bubbleBrush, arrow);
     }
 
     private static void DrawTentacles(Graphics g, Robot robot, float cx, float cy)
@@ -115,7 +151,14 @@ public static class PixelRobotRenderer
     private static void DrawAntenna(Graphics g, Robot robot, float cx, float cy)
     {
         using var antennaBrush = new SolidBrush(robot.SecondaryColor);
-        using var tipBrush = new SolidBrush(Color.FromArgb(255, 255, 100, 100));
+        
+        // 如果处于警告状态，天线末端闪烁
+        Color tipColor = Color.FromArgb(255, 255, 100, 100);
+        if (robot.IsWarning && (robot.WarningTimer / 10) % 2 == 0)
+        {
+            tipColor = Color.Yellow;
+        }
+        using var tipBrush = new SolidBrush(tipColor);
 
         float wave = (float)Math.Sin(robot.AnimationFrame * Math.PI / 2) * 3;
 

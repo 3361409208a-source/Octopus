@@ -36,6 +36,14 @@ public class Robot
     // 速度倍率
     public float SpeedMultiplier { get; set; } = 1.0f;
 
+    // 终端状态
+    public string LastOutput { get; set; } = "";
+    public string StatusMessage { get; set; } = "IDLE";
+    public string AlertMessage { get; set; } = "";
+    public bool IsWarning { get; set; } = false;
+    public int WarningTimer { get; set; } = 0;
+    public event Action<string>? OnTerminalOutput;
+
     // 随机行为
     public int PauseTimer { get; set; } = 0;
     public int ChangeDirectionTimer { get; set; } = 0;
@@ -80,6 +88,12 @@ public class Robot
 
     public void Update(int screenWidth, int screenHeight)
     {
+        if (WarningTimer > 0)
+        {
+            WarningTimer--;
+            if (WarningTimer == 0) IsWarning = false;
+        }
+
         if (!IsActive || !IsMoving) return;
 
         // 停顿逻辑
@@ -166,6 +180,47 @@ public class Robot
     {
         // 关闭该机器人的终端标签页
         TerminalManagerForm.Instance.CloseTerminal(this);
+    }
+
+    public void NotifyOutput(string text, bool isError = false)
+    {
+        LastOutput = text;
+        OnTerminalOutput?.Invoke(text);
+        
+        // 1. 如果是明显的错误流信息 (StandardError)
+        if (isError)
+        {
+            StatusMessage = "ERROR";
+            AlertMessage = "SOMETHING BROKE!";
+            IsWarning = true;
+            WarningTimer = 180;
+            return;
+        }
+
+        // 2. 检测 Claude 或终端常见的确认/输入请求
+        if (text.Contains("(y/n)", StringComparison.OrdinalIgnoreCase) || 
+            text.Contains("[y/n]", StringComparison.OrdinalIgnoreCase) ||
+            text.Contains("Confirm?", StringComparison.OrdinalIgnoreCase) ||
+            text.Contains("Proceed?", StringComparison.OrdinalIgnoreCase) ||
+            text.Contains("Continue?", StringComparison.OrdinalIgnoreCase))
+        {
+            StatusMessage = "WAITING";
+            AlertMessage = "CLAUDE NEEDS YOU!";
+            IsWarning = true;
+            WarningTimer = 300; 
+        }
+        // 3. 增强的错误关键词检测（包括您截图中的情况）
+        else if (text.Contains("Error", StringComparison.OrdinalIgnoreCase) || 
+                 text.Contains("not recognized", StringComparison.OrdinalIgnoreCase) ||
+                 text.Contains("failed", StringComparison.OrdinalIgnoreCase)) 
+        {
+            StatusMessage = "ERROR";
+            AlertMessage = "SOMETHING BROKE!";
+            IsWarning = true;
+            WarningTimer = 180;
+        }
+        else if (text.Contains("Finished", StringComparison.OrdinalIgnoreCase)) StatusMessage = "COMPLETED";
+        else if (text.Contains("Running", StringComparison.OrdinalIgnoreCase)) StatusMessage = "BUSY";
     }
 }
 
