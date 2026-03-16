@@ -14,6 +14,14 @@ public static class PixelRobotRenderer
         int size = robot.Size;
         bool facingRight = robot.FacingRight;
 
+        // 1. 绘制相对于机器人的 UI 元素（始终正向显示）
+        DrawName(g, robot);
+        DrawAlertBubble(g, robot);
+        DrawEmojiBubble(g, robot);
+        DrawChatBubble(g, robot);
+        DrawThinkingIndicator(g, robot);
+
+        // 2. 绘制机器人本体（包含翻转和旋转动画）
         var state = g.Save();
 
         if (!facingRight)
@@ -29,12 +37,126 @@ public static class PixelRobotRenderer
 
         DrawTentacles(g, robot, centerX, centerY);
         DrawBody(g, robot, centerX, centerY);
+        
+        // 眼睛和天线单独处理旋转，确保围绕中心转
+        if (robot.SpecialState == "SPINNING")
+        {
+            // 补偿翻转造成的旋转轴偏移
+            float rotAngle = facingRight ? robot.RotationAngle : -robot.RotationAngle;
+            
+            // 围绕局部中心旋转
+            var m = g.Transform;
+            m.RotateAt(rotAngle, new PointF(centerX, centerY));
+            g.Transform = m;
+        }
+        
+        if (robot.SpecialState == "BLUSH")
+        {
+            DrawBlush(g, robot, centerX, centerY);
+        }
+
         DrawEyes(g, robot, centerX, centerY);
         DrawAntenna(g, robot, centerX, centerY);
-        DrawName(g, robot);
-        DrawAlertBubble(g, robot);
 
         g.Restore(state);
+    }
+
+    private static void DrawChatBubble(Graphics g, Robot robot)
+    {
+        if (robot.ChatTimer <= 0 || string.IsNullOrEmpty(robot.ChatText)) return;
+
+        using var font = new Font("Microsoft YaHei", 9, FontStyle.Bold);
+        float maxWidth = 150; // 气泡最大宽度
+        
+        // 测量带换行限制的尺寸
+        var rawSize = g.MeasureString(robot.ChatText, font, (int)maxWidth);
+        
+        float bx = robot.X + robot.Size / 2;
+        float by = robot.Y - rawSize.Height - 30; // 根据文字高度动态调整位置
+        
+        RectangleF bubbleRect = new RectangleF(bx - rawSize.Width / 2 - 10, by - rawSize.Height / 2 - 5, rawSize.Width + 20, rawSize.Height + 10);
+        
+        // 绘制气泡背景
+        using var shadowBrush = new SolidBrush(Color.FromArgb(80, 0, 0, 0));
+        g.FillRoundedRectangle(shadowBrush, bubbleRect.X + 2, bubbleRect.Y + 2, bubbleRect.Width, bubbleRect.Height, 8);
+        
+        using var bgBrush = new SolidBrush(Color.White);
+        g.FillRoundedRectangle(bgBrush, bubbleRect.X, bubbleRect.Y, bubbleRect.Width, bubbleRect.Height, 8);
+        
+        using var borderPen = new Pen(Color.FromArgb(200, 200, 200), 1);
+        g.DrawRoundedRectangle(borderPen, bubbleRect.X, bubbleRect.Y, bubbleRect.Width, bubbleRect.Height, 8);
+        
+        using var textBrush = new SolidBrush(Color.FromArgb(50, 50, 50));
+        // 使用 StringFormat 处理自动换行
+        var format = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
+        g.DrawString(robot.ChatText, font, textBrush, bubbleRect, format);
+        
+        // 小尾巴
+        PointF[] tail = {
+            new PointF(bx - 5, bubbleRect.Bottom),
+            new PointF(bx + 5, bubbleRect.Bottom),
+            new PointF(bx, bubbleRect.Bottom + 6)
+        };
+        g.FillPolygon(Brushes.White, tail);
+    }
+
+    private static void DrawThinkingIndicator(Graphics g, Robot robot)
+    {
+        if (!robot.IsThinking) return;
+
+        float bx = robot.X + robot.Size / 2 + 15;
+        float by = robot.Y + 10;
+        
+        int pulse = (int)(DateTime.Now.Millisecond / 333) % 3;
+        using var brush = new SolidBrush(Color.FromArgb(200, 255, 255, 255));
+        
+        for (int i = 0; i <= pulse; i++)
+        {
+            g.FillRectangle(brush, bx + i * 6, by, 3, 3);
+        }
+    }
+
+    // 辅助方法：绘制圆角矩形
+    public static void FillRoundedRectangle(this Graphics g, Brush brush, float x, float y, float width, float height, float radius)
+    {
+        using var path = GetRoundedRectPath(x, y, width, height, radius);
+        g.FillPath(brush, path);
+    }
+
+    public static void DrawRoundedRectangle(this Graphics g, Pen pen, float x, float y, float width, float height, float radius)
+    {
+        using var path = GetRoundedRectPath(x, y, width, height, radius);
+        g.DrawPath(pen, path);
+    }
+
+    private static System.Drawing.Drawing2D.GraphicsPath GetRoundedRectPath(float x, float y, float width, float height, float radius)
+    {
+        var path = new System.Drawing.Drawing2D.GraphicsPath();
+        float d = radius * 2;
+        path.AddArc(x, y, d, d, 180, 90);
+        path.AddArc(x + width - d, y, d, d, 270, 90);
+        path.AddArc(x + width - d, y + height - d, d, d, 0, 90);
+        path.AddArc(x, y + height - d, d, d, 90, 90);
+        path.CloseAllFigures();
+        return path;
+    }
+
+    private static void DrawEmojiBubble(Graphics g, Robot robot)
+    {
+        if (robot.EmojiBubbleTimer <= 0) return;
+
+        float bx = robot.X + robot.Size - 10;
+        float by = robot.Y - 20;
+
+        using var font = new Font("Segoe UI Emoji", 14);
+        g.DrawString(robot.CurrentEmoji, font, Brushes.White, bx, by);
+    }
+
+    private static void DrawBlush(Graphics g, Robot robot, float cx, float cy)
+    {
+        using var blushBrush = new SolidBrush(Color.FromArgb(150, 255, 182, 193));
+        g.FillEllipse(blushBrush, cx - 15, cy, 10, 6);
+        g.FillEllipse(blushBrush, cx + 5, cy, 10, 6);
     }
 
     private static void DrawAlertBubble(Graphics g, Robot robot)
@@ -126,26 +248,57 @@ public static class PixelRobotRenderer
         float rightEyeX = cx + 8;
 
         int blinkFrame = robot.AnimationFrame;
-        bool isBlinking = blinkFrame == 2;
+        bool isBlinking = blinkFrame == 2 || robot.SpecialState == "SLEEPY";
         float eyeHeight = isBlinking ? 2 : 8;
 
         using var eyeWhiteBrush = new SolidBrush(Color.White);
         using var eyeBrush = new SolidBrush(robot.EyeColor);
         using var pupilBrush = new SolidBrush(Color.Black);
+        using var heartBrush = new SolidBrush(Color.HotPink);
 
+        // 左眼
         DrawPixelEllipse(g, eyeWhiteBrush, leftEyeX, eyeY, 10, eyeHeight);
         if (!isBlinking)
         {
-            DrawPixelEllipse(g, eyeBrush, leftEyeX + 1, eyeY, 6, 6);
-            g.FillRectangle(pupilBrush, leftEyeX + 1, eyeY - 1, 2, 4);
+            if (robot.SpecialState == "HEART_EYES")
+            {
+                DrawHeart(g, heartBrush, leftEyeX, eyeY, 8);
+            }
+            else
+            {
+                DrawPixelEllipse(g, eyeBrush, leftEyeX + 1, eyeY, 6, 6);
+                g.FillRectangle(pupilBrush, leftEyeX + 1, eyeY - 1, 2, 4);
+            }
         }
 
+        // 右眼
         DrawPixelEllipse(g, eyeWhiteBrush, rightEyeX, eyeY, 10, eyeHeight);
         if (!isBlinking)
         {
-            DrawPixelEllipse(g, eyeBrush, rightEyeX + 1, eyeY, 6, 6);
-            g.FillRectangle(pupilBrush, rightEyeX + 1, eyeY - 1, 2, 4);
+            if (robot.SpecialState == "HEART_EYES")
+            {
+                DrawHeart(g, heartBrush, rightEyeX, eyeY, 8);
+            }
+            else
+            {
+                DrawPixelEllipse(g, eyeBrush, rightEyeX + 1, eyeY, 6, 6);
+                g.FillRectangle(pupilBrush, rightEyeX + 1, eyeY - 1, 2, 4);
+            }
         }
+    }
+
+    private static void DrawHeart(Graphics g, Brush brush, float x, float y, float size)
+    {
+        float s = size / 2;
+        PointF[] points = {
+            new PointF(x, y + s/2),
+            new PointF(x - s, y - s/2),
+            new PointF(x - s/2, y - s),
+            new PointF(x, y - s/2),
+            new PointF(x + s/2, y - s),
+            new PointF(x + s, y - s/2)
+        };
+        g.FillPolygon(brush, points);
     }
 
     private static void DrawAntenna(Graphics g, Robot robot, float cx, float cy)

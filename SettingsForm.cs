@@ -29,7 +29,7 @@ public class SettingsForm : Form
 
     private void InitializeComponent()
     {
-        this.Text = "🤖 Robot Pet Settings";
+        this.Text = "Robot Pet Settings";
         this.Size = new Size(450, 400);
         this.StartPosition = FormStartPosition.CenterScreen;
         this.FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -136,7 +136,7 @@ public class SettingsForm : Form
         // 说明
         var infoLabel = new Label
         {
-            Text = "💡 提示: 左键点击机器人打开CMD终端\n    ESC 打开菜单 | 空格 暂停/继续",
+            Text = "💡 提示: 左键点击机器人打开CMD终端\n    Ctrl+Shift+M 打开菜单 | Ctrl+Shift+P 暂停/继续",
             ForeColor = Color.Gray,
             Font = new Font("Microsoft YaHei", 9),
             AutoSize = true,

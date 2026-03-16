@@ -3,12 +3,25 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 namespace CockroachPet;
 
 public partial class Form1 : Form
 {
+    // Windows API for global hotkeys
+    [DllImport("user32.dll")]
+    private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+
+    [DllImport("user32.dll")]
+    private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+
+    private const int HOTKEY_ID_MENU = 1;
+    private const int HOTKEY_ID_TOGGLE = 2;
+    private const int HOTKEY_ID_PAUSE = 3;
+    private const uint MOD_CTRL_SHIFT = 0x0002 | 0x0004; // MOD_CONTROL | MOD_SHIFT
+
     // 机器人列表
     private List<Robot> _robots = new List<Robot>();
 
@@ -29,7 +42,7 @@ public partial class Form1 : Form
 
     // 默认设置
     public int DefaultRobotSize { get; set; } = 64;
-    public string DefaultRobotName { get; set; } = "Claude";
+    public string DefaultRobotName { get; set; } = "小八";
     public int DefaultRobotCount { get; set; } = 1;
     public bool ShowNamingDialog { get; set; } = false; // 默认不显示命名对话框
 
@@ -69,6 +82,43 @@ public partial class Form1 : Form
                 SpawnRobot(name, -1, -1);
             }
         }
+    }
+
+    private Icon CreateRobotIcon()
+    {
+        // 创建像素八爪鱼图标
+        var iconBitmap = new Bitmap(32, 32);
+        using (var g = Graphics.FromImage(iconBitmap))
+        {
+            g.Clear(Color.Transparent);
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.None;
+            g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.Half;
+
+            // 绘制简单的像素八爪鱼
+            using var bodyBrush = new SolidBrush(Color.FromArgb(77, 171, 255)); // 蓝色
+            using var tentacleBrush = new SolidBrush(Color.FromArgb(51, 153, 255));
+            using var eyeBrush = new SolidBrush(Color.White);
+            using var pupilBrush = new SolidBrush(Color.Black);
+
+            // 身体 (圆形)
+            g.FillEllipse(bodyBrush, 8, 6, 16, 14);
+
+            // 触手 (8条)
+            for (int i = 0; i < 8; i++)
+            {
+                float angle = i * (float)(Math.PI / 4);
+                int tx = 16 + (int)(Math.Cos(angle) * 10);
+                int ty = 13 + (int)(Math.Sin(angle) * 8);
+                g.FillRectangle(tentacleBrush, tx - 1, ty - 1, 3, 3);
+            }
+
+            // 眼睛
+            g.FillEllipse(eyeBrush, 11, 8, 5, 5);
+            g.FillEllipse(eyeBrush, 18, 8, 5, 5);
+            g.FillRectangle(pupilBrush, 13, 9, 2, 2);
+            g.FillRectangle(pupilBrush, 20, 9, 2, 2);
+        }
+        return Icon.FromHandle(iconBitmap.GetHicon());
     }
 
     private void LoadSettingsFromFile()
@@ -127,6 +177,9 @@ public partial class Form1 : Form
         // 启用点击穿透
         SetClickThrough(true);
 
+        // 设置窗口图标
+        this.Icon = CreateRobotIcon();
+
         // 定时器
         _moveTimer = new System.Windows.Forms.Timer();
         _moveTimer.Interval = 30;
@@ -137,6 +190,61 @@ public partial class Form1 : Form
         this.Paint += Form1_Paint;
         this.MouseClick += Form1_MouseClick;
         this.KeyDown += Form1_KeyDown;
+
+        // 注册全局热键
+        RegisterGlobalHotkeys();
+    }
+
+    private void RegisterGlobalHotkeys()
+    {
+        // 使用组合键避免干扰正常操作
+        // Ctrl+Shift+P = 暂停/继续所有
+        RegisterHotKey(this.Handle, HOTKEY_ID_PAUSE, MOD_CTRL_SHIFT, 0x50); // P
+        // Ctrl+Shift+T = 切换点击穿透
+        RegisterHotKey(this.Handle, HOTKEY_ID_TOGGLE, MOD_CTRL_SHIFT, 0x54); // T
+        // Ctrl+Shift+M = 打开菜单
+        RegisterHotKey(this.Handle, HOTKEY_ID_MENU, MOD_CTRL_SHIFT, 0x4D); // M
+    }
+
+    protected override void WndProc(ref Message m)
+    {
+        const int WM_HOTKEY = 0x0312;
+        if (m.Msg == WM_HOTKEY)
+        {
+            int id = m.WParam.ToInt32();
+            switch (id)
+            {
+                case HOTKEY_ID_MENU:
+                    ShowTrayMenu();
+                    break;
+                case HOTKEY_ID_TOGGLE:
+                    SetClickThrough(!_clickThrough);
+                    ShowNotification(_clickThrough ? "点击穿透: 开启" : "点击穿透: 关闭");
+                    break;
+                case HOTKEY_ID_PAUSE:
+                    TogglePauseAll();
+                    break;
+            }
+        }
+        base.WndProc(ref m);
+    }
+
+    private void ShowTrayMenu()
+    {
+        if (_notifyIcon != null)
+        {
+            _notifyIcon.ContextMenuStrip = CreateContextMenu();
+            var mi = typeof(NotifyIcon).GetMethod("ShowContextMenu",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+            mi?.Invoke(_notifyIcon, null);
+        }
+    }
+
+    private void TogglePauseAll()
+    {
+        bool anyMoving = _robots.Any(r => r.IsMoving);
+        foreach (var r in _robots) r.IsMoving = !anyMoving;
+        ShowNotification(anyMoving ? "全部暂停" : "全部继续");
     }
 
     private void SpawnRobotsWithNaming(int count)
@@ -161,8 +269,8 @@ public partial class Form1 : Form
     {
         _notifyIcon = new NotifyIcon
         {
-            Text = "🤖 Pixel Robot Pet",
-            Icon = SystemIcons.Application,
+            Text = "Pixel Robot Pet",
+            Icon = CreateRobotIcon(),
             Visible = true
         };
 
@@ -185,7 +293,7 @@ public partial class Form1 : Form
 
         // 启动提示
         _notifyIcon.BalloonTipTitle = "Pixel Robot Pet";
-        _notifyIcon.BalloonTipText = "🤖 系统已启动！\n点击托盘图标打开菜单";
+        _notifyIcon.BalloonTipText = "系统已启动！\nCtrl+Shift+M 打开菜单\nCtrl+Shift+P 暂停/继续";
         _notifyIcon.ShowBalloonTip(3000);
     }
 
@@ -196,7 +304,7 @@ public partial class Form1 : Form
         // 机器人列表
         if (_robots.Count > 0)
         {
-            menu.Items.Add("🤖 机器人列表:").Enabled = false;
+            menu.Items.Add("机器人列表:").Enabled = false;
             foreach (var robot in _robots)
             {
                 var robotMenu = new ToolStripMenuItem($"{robot.Name} (#{robot.Id})");
@@ -220,7 +328,7 @@ public partial class Form1 : Form
         menu.Items.Add("➕ 投放新机器人", null, (s, e) => SpawnRobotWithName());
         menu.Items.Add("⚡ 快速投放", null, (s, e) =>
         {
-            string[] names = { "Claude", "Alpha", "Beta", "Gamma", "Delta", "Neo", "Pixel", "Byte" };
+            string[] names = { "小八", "阿呆", "像素仔", "蓝灵", "红豆", "大眼", "触手大王", "碳基生物" };
             SpawnRobot(names[new Random().Next(names.Length)], -1, -1);
         });
 
@@ -271,7 +379,7 @@ public partial class Form1 : Form
         menu.Items.Add("❓ 关于", null, (s, e) =>
         {
             MessageBox.Show(
-                "🤖 Pixel Robot Pet\n\n" +
+                "Pixel Robot Pet\n\n" +
                 "桌面八爪鱼机器人宠物\n" +
                 "点击机器人打开CMD终端\n\n" +
                 "Version 2.0",
@@ -292,23 +400,28 @@ public partial class Form1 : Form
         using var dialog = new Form
         {
             Text = "快捷键",
-            Size = new Size(420, 350),
+            Size = new Size(480, 450),
             StartPosition = FormStartPosition.CenterScreen,
             FormBorderStyle = FormBorderStyle.FixedDialog,
             BackColor = Color.FromArgb(40, 40, 40),
             ForeColor = Color.White
         };
 
-        var text = @"🤖 像素八爪鱼机器人 - 快捷键
+        var text = @"像素八爪鱼机器人 - 快捷键
+
+【全局快捷键（任何窗口都可用）】
+  Ctrl+Shift+P       - 暂停/继续所有机器人
+  Ctrl+Shift+T       - 切换点击穿透模式
+  Ctrl+Shift+M       - 打开菜单
+
+【程序内快捷键（关闭点击穿透后可用）】
+  ESC                - 打开菜单
+  F11                - 切换点击穿透模式
+  空格               - 暂停/继续所有机器人
 
 鼠标:
   左键点击机器人      - 打开该机器人的CMD终端
   右键托盘图标        - 打开菜单
-
-键盘:
-  ESC                - 打开右键菜单
-  F11                - 切换点击穿透模式
-  空格               - 暂停/继续所有机器人
 
 终端操作:
   ESC                - 隐藏终端到托盘
@@ -316,10 +429,11 @@ public partial class Form1 : Form
   CMD中输入 exit     - 真正关闭终端
 
 机器人命令:
-  robot-name         - 显示名字
+  robot-name         - 显示名字和ID
   robot-status       - 显示状态
   robot-resume       - 恢复移动
   robot-stop         - 停止移动
+  robot-help         - 显示帮助
 
 托盘图标操作:
   左键/右键点击      - 显示菜单
@@ -331,7 +445,7 @@ public partial class Form1 : Form
             Multiline = true,
             ReadOnly = true,
             Dock = DockStyle.Fill,
-            Font = new Font("Consolas", 10),
+            Font = new Font("Segoe UI", 10),
             BackColor = Color.Black,
             ForeColor = Color.Lime,
             BorderStyle = BorderStyle.None,
@@ -368,9 +482,16 @@ public partial class Form1 : Form
         int screenWidth = Screen.PrimaryScreen!.Bounds.Width;
         int screenHeight = Screen.PrimaryScreen.Bounds.Height;
 
-        foreach (var robot in _robots)
+        for (int i = 0; i < _robots.Count; i++)
         {
+            var robot = _robots[i];
             robot.Update(screenWidth, screenHeight);
+
+            // 检查与其他机器人的互动
+            for (int j = i + 1; j < _robots.Count; j++)
+            {
+                robot.InteractWith(_robots[j]);
+            }
         }
 
         this.Invalidate();
@@ -409,25 +530,23 @@ public partial class Form1 : Form
 
     private void Form1_KeyDown(object? sender, KeyEventArgs e)
     {
+        // 这些快捷键只在程序有焦点时响应（点击穿透关闭时）
         if (e.KeyCode == Keys.F11)
         {
             SetClickThrough(!_clickThrough);
         }
         else if (e.KeyCode == Keys.Escape)
         {
-            // 刷新并显示菜单
+            // 显示菜单
             if (_notifyIcon != null)
             {
                 _notifyIcon.ContextMenuStrip = CreateContextMenu();
-                var mi = typeof(NotifyIcon).GetMethod("ShowContextMenu",
-                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
-                mi?.Invoke(_notifyIcon, null);
+                _notifyIcon.ContextMenuStrip.Show(Cursor.Position);
             }
         }
         else if (e.KeyCode == Keys.Space)
         {
-            bool anyMoving = _robots.Any(r => r.IsMoving);
-            foreach (var r in _robots) r.IsMoving = !anyMoving;
+            TogglePauseAll();
         }
     }
 
@@ -520,7 +639,7 @@ public partial class Form1 : Form
         _robots.Add(robot);
         _robotIdCounter++;
 
-        ShowNotification($"🤖 Robot '{name}' deployed!");
+        ShowNotification($"Robot '{name}' deployed!");
     }
 
     public void ClearAllRobots()
@@ -574,6 +693,9 @@ public partial class Form1 : Form
 
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
+        // 注销全局热键
+        UnregisterHotKey(this.Handle, HOTKEY_ID_PAUSE);
+
         _moveTimer?.Stop();
         _moveTimer?.Dispose();
 

@@ -1,9 +1,6 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Drawing;
-using System.Linq;
-using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 namespace CockroachPet;
@@ -11,7 +8,7 @@ namespace CockroachPet;
 public class TerminalManagerForm : Form
 {
     private TabControl _tabControl;
-    private Dictionary<Robot, TerminalTab> _terminals = new Dictionary<Robot, TerminalTab>();
+    private Dictionary<Robot, ChatTab> _terminals = new Dictionary<Robot, ChatTab>();
     private static TerminalManagerForm? _instance;
 
     public static TerminalManagerForm Instance
@@ -33,57 +30,38 @@ public class TerminalManagerForm : Form
 
     private void InitializeComponent()
     {
-        this.Text = "🤖 Robot Terminal Manager";
-        this.Size = new Size(1000, 700);
+        this.Text = "💬 机器人聊天室";
+        this.Size = new Size(500, 600);
         this.StartPosition = FormStartPosition.CenterScreen;
         this.BackColor = Color.FromArgb(30, 30, 30);
-        this.MinimumSize = new Size(600, 400);
 
-        // 标签页控件
         _tabControl = new TabControl
         {
             Dock = DockStyle.Fill,
             BackColor = Color.FromArgb(40, 40, 40),
             ForeColor = Color.White,
-            Font = new Font("Consolas", 10),
-            Padding = new Point(15, 5)
+            Font = new Font("Microsoft YaHei", 10)
         };
 
         this.Controls.Add(_tabControl);
-        this.FormClosing += TerminalManagerForm_FormClosing;
+        this.FormClosing += (s, e) => { e.Cancel = true; this.Hide(); };
     }
 
     public void OpenTerminal(Robot robot)
     {
         if (_terminals.ContainsKey(robot))
         {
-            // 终端已存在，切换到该标签页
-            var tab = _terminals[robot];
-            _tabControl.SelectedTab = tab.TabPage;
-            this.Show();
-            this.Activate();
-            tab.FocusTerminal();
+            _tabControl.SelectedTab = _terminals[robot].TabPage;
         }
         else
         {
-            // 创建新的终端标签页
-            var tab = new TerminalTab(robot);
+            var tab = new ChatTab(robot);
             _terminals[robot] = tab;
             _tabControl.TabPages.Add(tab.TabPage);
             _tabControl.SelectedTab = tab.TabPage;
-            
-            this.Show();
-            this.Activate();
-            
-            // 确保窗口和标签页完全显示后再启动终端
-            Application.DoEvents();
-            
-            // 使用 BeginInvoke 在消息队列处理完后执行
-            this.BeginInvoke(new Action(() =>
-            {
-                tab.StartTerminal();
-            }));
         }
+        this.Show();
+        this.Activate();
     }
 
     public void CloseTerminal(Robot robot)
@@ -91,240 +69,183 @@ public class TerminalManagerForm : Form
         if (_terminals.ContainsKey(robot))
         {
             var tab = _terminals[robot];
-            tab.Dispose();
             _tabControl.TabPages.Remove(tab.TabPage);
             _terminals.Remove(robot);
-
-            if (_terminals.Count == 0)
-            {
-                this.Hide();
-            }
         }
-    }
-
-    private void TerminalManagerForm_FormClosing(object? sender, FormClosingEventArgs e)
-    {
-        if (e.CloseReason == CloseReason.UserClosing)
-        {
-            e.Cancel = true;
-            this.Hide();
-        }
-    }
-
-    protected override void Dispose(bool disposing)
-    {
-        if (disposing)
-        {
-            foreach (var tab in _terminals.Values)
-            {
-                tab.Dispose();
-            }
-            _terminals.Clear();
-        }
-        base.Dispose(disposing);
     }
 }
 
-public class TerminalTab : IDisposable
+public class ChatTab
 {
     private Robot _robot;
     private TabPage _tabPage;
-    private RichTextBox _outputBox;
+    private FlowLayoutPanel _messagePanel;
     private TextBox _inputBox;
-    private Process? _cmdProcess;
-    private List<string> _commandHistory = new List<string>();
-    private int _historyIndex = -1;
 
     public TabPage TabPage => _tabPage;
 
-    public TerminalTab(Robot robot)
+    public ChatTab(Robot robot)
     {
         _robot = robot;
-        InitializeTab();
-    }
-
-    private void InitializeTab()
-    {
-        _tabPage = new TabPage
-        {
-            Text = $"  {_robot.Name}  ",
-            BackColor = Color.Black,
-            Padding = new Padding(3)
-        };
-
-        // 容器面板
-        Panel container = new Panel { Dock = DockStyle.Fill, BackColor = Color.Black };
+        _tabPage = new TabPage { Text = $"  {robot.Name}  ", BackColor = Color.FromArgb(30, 30, 30) };
         
-        // 输入框 (底部)
-        _inputBox = new TextBox
-        {
-            Dock = DockStyle.Bottom,
-            BackColor = Color.FromArgb(30, 30, 30),
-            ForeColor = Color.FromArgb(0, 255, 0),
-            Font = new Font("Consolas", 11),
-            BorderStyle = BorderStyle.FixedSingle
-        };
-        _inputBox.KeyDown += InputBox_KeyDown;
+        var mainLayout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2 };
+        mainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 50));
 
-        // 输出框 (填充)
-        _outputBox = new RichTextBox
+        _messagePanel = new FlowLayoutPanel
         {
             Dock = DockStyle.Fill,
-            BackColor = Color.Black,
-            ForeColor = Color.FromArgb(0, 200, 0),
-            Font = new Font("Consolas", 11),
-            ReadOnly = true,
-            BorderStyle = BorderStyle.None,
-            ScrollBars = RichTextBoxScrollBars.Vertical
+            AutoScroll = true,
+            BackColor = Color.FromArgb(20, 20, 20),
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false,
+            Padding = new Padding(10)
+        };
+        _messagePanel.SizeChanged += (s, e) => {
+            foreach (Control c in _messagePanel.Controls) c.Width = _messagePanel.ClientSize.Width - 25;
         };
 
-        container.Controls.Add(_outputBox);
-        container.Controls.Add(_inputBox);
-        _tabPage.Controls.Add(container);
-    }
-
-    public void StartTerminal()
-    {
-        try
+        _inputBox = new TextBox
         {
-            string tempDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "RobotTerminals");
-            System.IO.Directory.CreateDirectory(tempDir);
-            string batchFile = System.IO.Path.Combine(tempDir, $"robot_{_robot.Id}.bat");
+            Dock = DockStyle.Fill,
+            BackColor = Color.FromArgb(40, 40, 40),
+            ForeColor = Color.White,
+            BorderStyle = BorderStyle.FixedSingle,
+            Font = new Font("Microsoft YaHei", 11)
+        };
 
-            string batchContent = "@echo off\n" +
-                "chcp 65001 >nul 2>&1\n" +
-                "cls\n" +
-                "echo ==========================================\n" +
-                $"echo  Robot: {_robot.Name}    ID: {_robot.Id:D3}\n" +
-                "echo ==========================================\n" +
-                "echo.\n" +
-                "echo Robot Commands:\n" +
-                "echo   robot-name    - Show robot name\n" +
-                "echo   robot-status  - Show robot status\n" +
-                "echo.\n" +
-                "echo [Capturing Output for Robot AI Interaction]\n" +
-                "echo ==========================================\n" +
-                "echo.\n" +
-                "doskey robot-name=echo Name: " + _robot.Name + " ^& echo ID: " + _robot.Id + "\n" +
-                "doskey robot-status=echo Status: " + _robot.StatusMessage + "\n" +
-                "\n" +
-                "cmd /k\n";
-            System.IO.File.WriteAllText(batchFile, batchContent);
-
-            _cmdProcess = new Process
+        _inputBox.KeyDown += (s, e) =>
+        {
+            if (e.KeyCode == Keys.Enter)
             {
-                StartInfo = new ProcessStartInfo
-                {
-                    FileName = "cmd.exe",
-                    Arguments = $"/c \"{batchFile}\"",
-                    UseShellExecute = false,
-                    RedirectStandardInput = true,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    CreateNoWindow = true,
-                    StandardOutputEncoding = System.Text.Encoding.UTF8,
-                    StandardErrorEncoding = System.Text.Encoding.UTF8
-                },
-                EnableRaisingEvents = true
-            };
+                SendMessage();
+                e.SuppressKeyPress = true;
+            }
+        };
 
-            _cmdProcess.OutputDataReceived += (s, e) => AppendText(e.Data);
-            _cmdProcess.ErrorDataReceived += (s, e) => AppendText(e.Data, Color.Red);
+        mainLayout.Controls.Add(_messagePanel, 0, 0);
+        mainLayout.Controls.Add(_inputBox, 0, 1);
+        _tabPage.Controls.Add(mainLayout);
 
-            _cmdProcess.Start();
-            _cmdProcess.BeginOutputReadLine();
-            _cmdProcess.BeginErrorReadLine();
-
-            FocusTerminal();
-        }
-        catch (Exception ex)
+        _robot.OnChatMessageReceived += HandleChatMessage;
+        
+        // 加载历史（历史消息目前不带思考过程，仅显示回复）
+        foreach(var msg in _robot.ChatHistory)
         {
-            AppendText("ERROR: Failed to start CMD process: " + ex.Message, Color.Red);
+            HandleChatMessage(msg.role, msg.content, "");
         }
     }
 
-    private void AppendText(string? text, Color? color = null)
+    private void SendMessage()
     {
+        string text = _inputBox.Text.Trim();
         if (string.IsNullOrEmpty(text)) return;
+        
+        _inputBox.Clear();
+        _robot.SendUserMessage(text).ConfigureAwait(false);
+    }
 
-        if (_tabPage.InvokeRequired)
+    private void HandleChatMessage(string role, string content, string thought)
+    {
+        if (_messagePanel.InvokeRequired)
         {
-            _tabPage.BeginInvoke(new Action(() => AppendText(text, color)));
+            _messagePanel.Invoke(new Action(() => HandleChatMessage(role, content, thought)));
             return;
         }
 
-        _outputBox.SelectionStart = _outputBox.TextLength;
-        _outputBox.SelectionLength = 0;
-        _outputBox.SelectionColor = color ?? Color.FromArgb(0, 200, 0);
-        _outputBox.AppendText(text + Environment.NewLine);
-        _outputBox.ScrollToCaret();
-
-        // 同时通知机器人：如果是红色（错误流），强制触发警告
-        _robot.NotifyOutput(text, color == Color.Red);
-    }
-
-    private void InputBox_KeyDown(object? sender, KeyEventArgs e)
-    {
-        if (e.KeyCode == Keys.Enter)
+        // 使用 TableLayoutPanel 代替 Panel，这是 WinForms 处理纵向堆叠最稳健的方式
+        var msgContainer = new TableLayoutPanel
         {
-            string cmd = _inputBox.Text;
-            if (!string.IsNullOrWhiteSpace(cmd))
+            ColumnCount = 1,
+            RowCount = 0, // 动态增加
+            Width = _messagePanel.ClientSize.Width - 30,
+            AutoSize = true,
+            BackColor = Color.FromArgb(35, 35, 35),
+            Padding = new Padding(10),
+            Margin = new Padding(0, 0, 0, 15)
+        };
+        msgContainer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+
+        // 1. 名字头部
+        var header = new Label
+        {
+            Text = role == "user" ? " 我:" : $" {_robot.Name}:",
+            ForeColor = role == "user" ? Color.Cyan : Color.Gold,
+            Font = new Font("Microsoft YaHei", 9, FontStyle.Bold),
+            AutoSize = true,
+            Dock = DockStyle.Top,
+            Margin = new Padding(0, 0, 0, 5)
+        };
+        msgContainer.Controls.Add(header);
+
+        // 2. 思考过程 (如果有)
+        if (!string.IsNullOrEmpty(thought))
+        {
+            var thoughtLabel = new Label
             {
-                _commandHistory.Add(cmd);
-                _historyIndex = _commandHistory.Count;
-                
-                if (_cmdProcess != null && !_cmdProcess.HasExited)
-                {
-                    _cmdProcess.StandardInput.WriteLine(cmd);
+                Text = thought,
+                ForeColor = Color.DarkGray,
+                BackColor = Color.FromArgb(25, 25, 25),
+                Font = new Font("Consolas", 9),
+                AutoSize = true,
+                Dock = DockStyle.Top,
+                Visible = false, // 默认折叠
+                Padding = new Padding(8),
+                Margin = new Padding(10, 5, 0, 5)
+            };
+
+            var toggleBtn = new Label
+            {
+                Text = " 💭 思考过程 (点击展开)",
+                ForeColor = Color.Gray,
+                Font = new Font("Microsoft YaHei", 8, FontStyle.Italic),
+                Cursor = Cursors.Hand,
+                AutoSize = true,
+                Dock = DockStyle.Top,
+                Padding = new Padding(0, 2, 0, 2)
+            };
+
+            toggleBtn.Click += (s, e) =>
+            {
+                thoughtLabel.Visible = !thoughtLabel.Visible;
+                toggleBtn.Text = thoughtLabel.Visible ? " 💭 思考过程 (点击折叠)" : " 💭 思考过程 (点击展开)";
+                // TableLayoutPanel 会因为 AutoSize 自动重绘
+            };
+
+            msgContainer.Controls.Add(toggleBtn);
+            msgContainer.Controls.Add(thoughtLabel);
+        }
+
+        // 3. 正文内容
+        var textBody = new Label
+        {
+            Text = content,
+            ForeColor = Color.White,
+            Font = new Font("Microsoft YaHei", 10),
+            AutoSize = true,
+            Dock = DockStyle.Top,
+            Padding = new Padding(5, 5, 0, 0)
+        };
+        msgContainer.Controls.Add(textBody);
+
+        // 核心：强制让父容器下的所有 Label 在 TableLayoutPanel 里触发换行
+        msgContainer.Paint += (s, e) => {
+            if (header.Width != msgContainer.Width - 20) {
+                header.MaximumSize = new Size(msgContainer.Width - 20, 0);
+                textBody.MaximumSize = new Size(msgContainer.Width - 20, 0);
+                // 思考内容也需要限制
+                foreach (Control c in msgContainer.Controls) {
+                    if (c is Label l && c != header && c != textBody)
+                        l.MaximumSize = new Size(msgContainer.Width - 30, 0);
                 }
-                _inputBox.Clear();
             }
-            e.Handled = true;
-            e.SuppressKeyPress = true;
-        }
-        else if (e.KeyCode == Keys.Up)
-        {
-            if (_historyIndex > 0)
-            {
-                _historyIndex--;
-                _inputBox.Text = _commandHistory[_historyIndex];
-                _inputBox.SelectionStart = _inputBox.Text.Length;
-            }
-            e.Handled = true;
-        }
-        else if (e.KeyCode == Keys.Down)
-        {
-            if (_historyIndex < _commandHistory.Count - 1)
-            {
-                _historyIndex++;
-                _inputBox.Text = _commandHistory[_historyIndex];
-                _inputBox.SelectionStart = _inputBox.Text.Length;
-            }
-            else
-            {
-                _historyIndex = _commandHistory.Count;
-                _inputBox.Clear();
-            }
-            e.Handled = true;
-        }
-    }
+        };
 
-    public void FocusTerminal()
-    {
-        _inputBox.Focus();
-    }
-
-    public void Dispose()
-    {
-        try
-        {
-            if (_cmdProcess != null && !_cmdProcess.HasExited)
-            {
-                _cmdProcess.Kill();
-            }
-        }
-        catch { }
-
-        _cmdProcess?.Dispose();
+        _messagePanel.Controls.Add(msgContainer);
+        
+        // 自动滚动
+        _messagePanel.ScrollControlIntoView(msgContainer);
+        _messagePanel.PerformLayout();
     }
 }
