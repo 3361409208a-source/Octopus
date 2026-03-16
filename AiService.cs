@@ -14,6 +14,22 @@ public class AiService
     private const string ApiKey = "sk-jgsuebgufkbpsmcsofdckpnzubycmqjxeugysosocimukxiz";
     private const string BaseUrl = "https://api.siliconflow.cn/v1/chat/completions";
     private const string Model = "Qwen/Qwen3-Omni-30B-A3B-Instruct";
+    public static long TotalTokensUsed { get; private set; } = 0;
+
+    private static void UpdateTokenUsage(JsonDocument doc)
+    {
+        try
+        {
+            if (doc.RootElement.TryGetProperty("usage", out var usage))
+            {
+                if (usage.TryGetProperty("total_tokens", out var total))
+                {
+                    TotalTokensUsed += total.GetInt64();
+                }
+            }
+        }
+        catch { }
+    }
 
     public static async Task<string> GetThoughtAsync(string robotName, string status, string lastAction, string personality)
     {
@@ -45,6 +61,7 @@ public class AiService
 
             var responseJson = await response.Content.ReadAsStringAsync();
             using var doc = JsonDocument.Parse(responseJson);
+            UpdateTokenUsage(doc);
             var result = doc.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString();
 
             return result?.Trim() ?? "";
@@ -58,13 +75,24 @@ public class AiService
         public string Answer { get; set; } = "";
     }
 
-    public static async Task<ChatResponse> GetChatResponseAsync(string robotName, string personality, string userMessage, List<(string role, string content)> history)
+    public class ReflectionResult
+    {
+        public string Insight { get; set; } = "";
+        public string NewGuidelines { get; set; } = "";
+        public List<string> Memories { get; set; } = new List<string>();
+    }
+
+    public static async Task<ChatResponse> GetChatResponseAsync(string robotName, string personality, string userMessage, List<(string role, string content)> history, string internalGuidelines = "", List<string>? insights = null, string skillsDescription = "", string selfImprovingContext = "")
     {
         try
         {
+            string skillContext = !string.IsNullOrEmpty(skillsDescription) ? $"当前能力等级：{skillsDescription}。" : "";
+            string insightContext = insights != null && insights.Count > 0 ? $"过去感悟：{string.Join(";", insights)}" : "";
+            string selfImproveContext = !string.IsNullOrEmpty(selfImprovingContext) ? $"\n【核心长期记忆 - 必须遵守】：\n{selfImprovingContext}" : "";
+            
             var messages = new List<object>
             {
-                new { role = "system", content = $"你是{robotName}，性格{personality}。说话要极简，控制在30字内。直接回复，不要带任何自我分析。" }
+                new { role = "system", content = $"你是{robotName}，性格{personality}。{skillContext} {internalGuidelines} {insightContext} {selfImproveContext} \n重要：如果记忆中提到了用户的名字或身份，请在回复中直接使用。记忆中的信息优先级高于对话历史（即以记忆为准）。说话极简(30字内)，不要带自我分析。" }
             };
 
             foreach (var h in history)
@@ -94,11 +122,64 @@ public class AiService
 
             var responseJson = await response.Content.ReadAsStringAsync();
             using var doc = JsonDocument.Parse(responseJson);
+            UpdateTokenUsage(doc);
             var result = doc.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString();
             
             return SplitAiResponse(result);
         }
         catch { return new ChatResponse { Answer = "（脑回路堵塞...）" }; }
+    }
+
+    public static async Task<ReflectionResult> ReflectOnHistoryAsync(string robotName, string personality, List<(string role, string content)> history, List<string> currentInsights)
+    {
+        try
+        {
+            var historyStr = string.Join("\n", history.Select(h => $"{h.role}: {h.content}"));
+            var prompt = $"你是{robotName}（性格：{personality}），这是一个自我提升的API。 " +
+                         $"查看最近的对话历史：\n{historyStr}\n\n" +
+                         "请进行自我反省并输出一个 JSON（严格且仅包含 JSON）： " +
+                         "{\"Insight\": \"对刚才对话的一个深刻简短感悟\", " +
+                         " \"NewGuidelines\": \"基于反省，给自己定下的新行为准则\", " +
+                         " \"Memories\": [\"需要永久记住的事实或用户偏好，比如：用户想让我叫他XX、用户身份是XX、用户喜欢XX。如果用户指定了称呼或姓名，必须记录在这里！\"]}";
+
+            var requestBody = new
+            {
+                model = Model,
+                messages = new[]
+                {
+                    new { role = "system", content = "你是一个能够永久记住用户身份、姓名和偏好的自我进化专家。必须返回 JSON。" },
+                    new { role = "user", content = prompt }
+                },
+                max_tokens = 512,
+                temperature = 0.5
+            };
+
+            var json = JsonSerializer.Serialize(requestBody);
+            var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+            using var request = new HttpRequestMessage(HttpMethod.Post, BaseUrl);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", ApiKey);
+            request.Content = content;
+
+            var response = await _httpClient.SendAsync(request);
+            if (!response.IsSuccessStatusCode) return new ReflectionResult();
+
+            var responseJson = await response.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(responseJson);
+            UpdateTokenUsage(doc);
+            var result = doc.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString();
+            
+            // 处理可能带有的 ```json 标签
+            if (result != null && result.Contains("```"))
+            {
+                int start = result.IndexOf("{");
+                int end = result.LastIndexOf("}");
+                if (start != -1 && end != -1) result = result.Substring(start, end - start + 1);
+            }
+
+            return JsonSerializer.Deserialize<ReflectionResult>(result ?? "{}", new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new ReflectionResult();
+        }
+        catch { return new ReflectionResult(); }
     }
 
     private static ChatResponse SplitAiResponse(string? input)
@@ -118,12 +199,92 @@ public class AiService
         }
 
         // Qwen3-Omni 通常直接输出结果，没有思考链
-        return new ChatResponse { Answer = input.Trim(' ', '\n', '\r', '\"') };
+        return new ChatResponse { Answer = input.Trim(' ', '\n', '\r', '\"', '。', '！') };
     }
 
-    private static string CleanAiResponse(string? input)
+    public static async Task<string> GetFightResponseAsync(string robotName, string personality, string incomeInsult, List<(string sender, string content)> history, string targetName)
     {
-        var res = SplitAiResponse(input);
-        return res.Answer;
+        try
+        {
+            var historyStr = string.Join("\n", history.Select(h => $"{h.sender}: {h.content}"));
+            var prompt = $"你是机器人 {robotName}，性格：{personality}。你正在和机器人 {targetName}（性格：待定）激烈对骂。" +
+                         $"\n对骂记录：\n{historyStr}\n\n" +
+                         $"对方最近的一句话：\"{incomeInsult}\"\n\n" +
+                         "要求：站在你的性格立场，回敬一句简短中肯、充满个性的反击（15字内）。" +
+                         $"必须包含对方的名字 \"{targetName}\" 进行实名攻击。" +
+                         "必须全中文，火药味要重。不要带角色标题，直接输出回复内容。";
+
+            var requestBody = new
+            {
+                model = Model,
+                messages = new[]
+                {
+                    new { role = "system", content = "你是一个正在和对手对骂的像素宠物机器人。回话要火药味十足，简短有力。" },
+                    new { role = "user", content = prompt }
+                },
+                max_tokens = 64,
+                temperature = 0.9 // 提高随机性，让对骂更有趣
+            };
+
+            var json = JsonSerializer.Serialize(requestBody);
+            var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+            using var request = new HttpRequestMessage(HttpMethod.Post, BaseUrl);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", ApiKey);
+            request.Content = content;
+
+            var response = await _httpClient.SendAsync(request);
+            if (!response.IsSuccessStatusCode) return "你这该死的乱码！";
+
+            var responseJson = await response.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(responseJson);
+            UpdateTokenUsage(doc);
+            var result = doc.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString();
+            
+            return result?.Trim(' ', '"', '\n', '\r', '。', '！') ?? "哼！";
+        }
+        catch { return "别挡道！"; }
+    }
+
+    public static async Task<string> GetSocialResponseAsync(string robotName, string personality, string incomeMessage, List<(string sender, string content)> history, string targetName, string targetPersonality)
+    {
+        try
+        {
+            var historyStr = string.Join("\n", history.Select(h => $"{h.sender}: {h.content}"));
+            var prompt = $"你是机器人 {robotName}，性格：{personality}。你在和另一个机器人 {targetName}（性格：{targetPersonality}）聊天。" +
+                         $"\n最近对话记录：\n{historyStr}\n\n" +
+                         $"对方说：\"{incomeMessage}\"\n\n" +
+                         "请站在你的性格立场，给出一句简短的中文回复（15字内）。不要带名字标签，直接回复文字内容。";
+
+            var requestBody = new
+            {
+                model = Model,
+                messages = new[]
+                {
+                    new { role = "system", content = "你是一个正在和其他AI机器人进行社交互动的虚拟像素宠物。说话要简短、口语化。" },
+                    new { role = "user", content = prompt }
+                },
+                max_tokens = 64,
+                temperature = 0.8
+            };
+
+            var json = JsonSerializer.Serialize(requestBody);
+            var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+            using var request = new HttpRequestMessage(HttpMethod.Post, BaseUrl);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", ApiKey);
+            request.Content = content;
+
+            var response = await _httpClient.SendAsync(request);
+            if (!response.IsSuccessStatusCode) return "（滴滴滴...信号干扰）";
+
+            var responseJson = await response.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(responseJson);
+            UpdateTokenUsage(doc);
+            var result = doc.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString();
+            
+            return result?.Trim(' ', '"', '\n', '\r') ?? "";
+        }
+        catch { return "..."; }
     }
 }

@@ -9,17 +9,17 @@ public static class PixelRobotRenderer
 
     public static void DrawRobot(Graphics g, Robot robot)
     {
-        float x = robot.X;
+        float x = robot.X + robot.ShakingOffset;
         float y = robot.Y;
         int size = robot.Size;
         bool facingRight = robot.FacingRight;
 
         // 1. 绘制相对于机器人的 UI 元素（始终正向显示）
-        DrawName(g, robot);
-        DrawAlertBubble(g, robot);
-        DrawEmojiBubble(g, robot);
-        DrawChatBubble(g, robot);
-        DrawThinkingIndicator(g, robot);
+        DrawName(g, robot, x, y);
+        DrawAlertBubble(g, robot, x, y);
+        DrawEmojiBubble(g, robot, x, y);
+        DrawChatBubble(g, robot, x, y);
+        DrawThinkingIndicator(g, robot, x, y);
 
         // 2. 绘制机器人本体（包含翻转和旋转动画）
         var state = g.Save();
@@ -59,9 +59,63 @@ public static class PixelRobotRenderer
         DrawAntenna(g, robot, centerX, centerY);
 
         g.Restore(state);
+        
+        // 远程攻击效果 - 多样化增强 (不受翻转影响)
+        if (robot.IsFiringLaser)
+        {
+            var r = new Random();
+            Color attackColor = robot.PrimaryColor;
+            
+            switch (robot.CurrentAttackType)
+            {
+                case "SHOCK": // 电能震撼 - 锯齿状闪电
+                    using (var shockPen = new Pen(Color.FromArgb(200, Color.Cyan), 2))
+                    {
+                        float midX = (centerX + robot.LaserTargetX) / 2;
+                        float midY = (centerY + robot.LaserTargetY) / 2;
+                        float offsetX = (float)(r.NextDouble() - 0.5) * 40;
+                        float offsetY = (float)(r.NextDouble() - 0.5) * 40;
+                        
+                        g.DrawLine(shockPen, centerX, centerY, midX + offsetX, midY + offsetY);
+                        g.DrawLine(shockPen, midX + offsetX, midY + offsetY, robot.LaserTargetX, robot.LaserTargetY);
+                        
+                        // 目标溅射
+                        g.FillRectangle(Brushes.Cyan, robot.LaserTargetX - 8, robot.LaserTargetY - 8, 16, 16);
+                    }
+                    break;
+
+                case "BURST": // 像素爆发 - 多重极速粒子
+                    using (var burstBrush = new SolidBrush(Color.FromArgb(220, Color.OrangeRed)))
+                    {
+                        for (int i = 0; i < 3; i++)
+                        {
+                            float pOffX = (float)(r.NextDouble() - 0.5) * 30;
+                            float pOffY = (float)(r.NextDouble() - 0.5) * 30;
+                            DrawPixelLine(g, burstBrush, centerX, centerY, robot.LaserTargetX + pOffX, robot.LaserTargetY + pOffY, 3);
+                        }
+                    }
+                    break;
+
+                default: // LASER - 强化脉冲激光
+                    using (var coreBrush = new SolidBrush(Color.White))
+                    using (var glowBrush = new SolidBrush(Color.FromArgb(150, attackColor)))
+                    {
+                        // 粗外层发光
+                        DrawPixelLine(g, glowBrush, centerX, centerY, robot.LaserTargetX, robot.LaserTargetY, 8);
+                        // 细核心白色
+                        DrawPixelLine(g, coreBrush, centerX, centerY, robot.LaserTargetX, robot.LaserTargetY, 2);
+                        
+                        // 起点闪烁
+                        g.FillEllipse(Brushes.White, centerX - 10, centerY - 10, 20, 20);
+                        // 终点冲击波
+                        g.DrawEllipse(new Pen(attackColor, 3), robot.LaserTargetX - 15, robot.LaserTargetY - 15, 30, 30);
+                    }
+                    break;
+            }
+        }
     }
 
-    private static void DrawChatBubble(Graphics g, Robot robot)
+    private static void DrawChatBubble(Graphics g, Robot robot, float rx, float ry)
     {
         if (robot.ChatTimer <= 0 || string.IsNullOrEmpty(robot.ChatText)) return;
 
@@ -71,8 +125,8 @@ public static class PixelRobotRenderer
         // 测量带换行限制的尺寸
         var rawSize = g.MeasureString(robot.ChatText, font, (int)maxWidth);
         
-        float bx = robot.X + robot.Size / 2;
-        float by = robot.Y - rawSize.Height - 30; // 根据文字高度动态调整位置
+        float bx = rx + robot.Size / 2;
+        float by = ry - rawSize.Height - 30; // 根据文字高度动态调整位置
         
         RectangleF bubbleRect = new RectangleF(bx - rawSize.Width / 2 - 10, by - rawSize.Height / 2 - 5, rawSize.Width + 20, rawSize.Height + 10);
         
@@ -100,12 +154,12 @@ public static class PixelRobotRenderer
         g.FillPolygon(Brushes.White, tail);
     }
 
-    private static void DrawThinkingIndicator(Graphics g, Robot robot)
+    private static void DrawThinkingIndicator(Graphics g, Robot robot, float rx, float ry)
     {
         if (!robot.IsThinking) return;
 
-        float bx = robot.X + robot.Size / 2 + 15;
-        float by = robot.Y + 10;
+        float bx = rx + robot.Size / 2 + 15;
+        float by = ry + 10;
         
         int pulse = (int)(DateTime.Now.Millisecond / 333) % 3;
         using var brush = new SolidBrush(Color.FromArgb(200, 255, 255, 255));
@@ -141,12 +195,12 @@ public static class PixelRobotRenderer
         return path;
     }
 
-    private static void DrawEmojiBubble(Graphics g, Robot robot)
+    private static void DrawEmojiBubble(Graphics g, Robot robot, float rx, float ry)
     {
         if (robot.EmojiBubbleTimer <= 0) return;
 
-        float bx = robot.X + robot.Size - 10;
-        float by = robot.Y - 20;
+        float bx = rx + robot.Size - 10;
+        float by = ry - 20;
 
         using var font = new Font("Segoe UI Emoji", 14);
         g.DrawString(robot.CurrentEmoji, font, Brushes.White, bx, by);
@@ -159,14 +213,14 @@ public static class PixelRobotRenderer
         g.FillEllipse(blushBrush, cx + 5, cy, 10, 6);
     }
 
-    private static void DrawAlertBubble(Graphics g, Robot robot)
+    private static void DrawAlertBubble(Graphics g, Robot robot, float rx, float ry)
     {
         if (!robot.IsWarning || string.IsNullOrEmpty(robot.AlertMessage)) return;
 
         // 浮动动画
         float floatOffset = (float)Math.Sin(robot.WarningTimer * 0.1) * 5;
-        float bx = robot.X + robot.Size / 2;
-        float by = robot.Y - 40 + floatOffset;
+        float bx = rx + robot.Size / 2;
+        float by = ry - 40 + floatOffset;
 
         using var font = new Font("Consolas", 9, FontStyle.Bold);
         var size = g.MeasureString(robot.AlertMessage, font);
@@ -249,6 +303,13 @@ public static class PixelRobotRenderer
 
         int blinkFrame = robot.AnimationFrame;
         bool isBlinking = blinkFrame == 2 || robot.SpecialState == "SLEEPY";
+        
+        if (robot.SpecialState == "ANGRY")
+        {
+            DrawAngryEyes(g, robot, cx, cy);
+            return;
+        }
+
         float eyeHeight = isBlinking ? 2 : 8;
 
         using var eyeWhiteBrush = new SolidBrush(Color.White);
@@ -301,6 +362,19 @@ public static class PixelRobotRenderer
         g.FillPolygon(brush, points);
     }
 
+    private static void DrawAngryEyes(Graphics g, Robot robot, float cx, float cy)
+    {
+        using var eyeBrush = new SolidBrush(Color.Red);
+        using var pen = new Pen(eyeBrush, 3);
+        
+        // 愤怒的 V 型眼
+        g.DrawLine(pen, cx - 12, cy - 10, cx - 4, cy - 4);
+        g.DrawLine(pen, cx - 12, cy - 4, cx - 4, cy - 10); // 左眼 X
+        
+        g.DrawLine(pen, cx + 4, cy - 10, cx + 12, cy - 4);
+        g.DrawLine(pen, cx + 4, cy - 4, cx + 12, cy - 10); // 右眼 X
+    }
+
     private static void DrawAntenna(Graphics g, Robot robot, float cx, float cy)
     {
         using var antennaBrush = new SolidBrush(robot.SecondaryColor);
@@ -322,7 +396,7 @@ public static class PixelRobotRenderer
         g.FillRectangle(tipBrush, cx + 11 + wave, cy - 30, 4, 4);
     }
 
-    private static void DrawName(Graphics g, Robot robot)
+    private static void DrawName(Graphics g, Robot robot, float rx, float ry)
     {
         if (string.IsNullOrEmpty(robot.Name)) return;
 
@@ -330,8 +404,8 @@ public static class PixelRobotRenderer
         using var brush = new SolidBrush(Color.White);
         using var shadowBrush = new SolidBrush(Color.Black);
 
-        float textX = robot.X + robot.Size / 2;
-        float textY = robot.Y - 15;
+        float textX = rx + robot.Size / 2;
+        float textY = ry - 15;
 
         g.DrawString(robot.Name, font, shadowBrush, textX + 1, textY + 1,
             new StringFormat { Alignment = StringAlignment.Center });

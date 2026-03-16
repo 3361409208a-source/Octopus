@@ -1,0 +1,80 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Text.Json;
+using System.Linq;
+using System.Drawing;
+
+namespace CockroachPet
+{
+    public class RobotData
+    {
+        public int Id { get; set; }
+        public string Name { get; set; } = "";
+        public string Personality { get; set; } = "";
+        public double ConsciousnessLevel { get; set; }
+        public int Experience { get; set; }
+        public List<string> LearnedInsights { get; set; } = new List<string>();
+        public string InternalGuidelines { get; set; } = "";
+        public Dictionary<string, Skill> Skills { get; set; } = new Dictionary<string, Skill>();
+        public int Size { get; set; }
+        public float SpeedMultiplier { get; set; }
+        public int PrimaryColorR { get; set; }
+        public int PrimaryColorG { get; set; }
+        public int PrimaryColorB { get; set; }
+    }
+
+    public static class PersistenceManager
+    {
+        private static string SavePath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "CockroachPet", "robots.json");
+
+        public static void SaveRobots(List<Robot> robots)
+        {
+            try
+            {
+                var directory = Path.GetDirectoryName(SavePath);
+                if (!Directory.Exists(directory)) Directory.CreateDirectory(directory!);
+
+                var data = robots.Select(r => new RobotData
+                {
+                    Id = r.Id,
+                    Name = r.Name,
+                    Personality = r.Personality,
+                    ConsciousnessLevel = r.ConsciousnessLevel,
+                    Experience = r.Experience,
+                    LearnedInsights = r.LearnedInsights,
+                    InternalGuidelines = r.InternalGuidelines,
+                    Skills = r.Skills,
+                    Size = r.Size,
+                    SpeedMultiplier = r.SpeedMultiplier,
+                    PrimaryColorR = r.PrimaryColor.R,
+                    PrimaryColorG = r.PrimaryColor.G,
+                    PrimaryColorB = r.PrimaryColor.B
+                }).ToList();
+
+                string json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true });
+                File.WriteAllText(SavePath, json);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Persistence Error: {ex.Message}");
+            }
+        }
+
+        public static List<RobotData> LoadRobots()
+        {
+            try
+            {
+                if (!File.Exists(SavePath)) return new List<RobotData>();
+
+                string json = File.ReadAllText(SavePath);
+                return JsonSerializer.Deserialize<List<RobotData>>(json) ?? new List<RobotData>();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Persistence Load Error: {ex.Message}");
+                return new List<RobotData>();
+            }
+        }
+    }
+}

@@ -67,19 +67,49 @@ public partial class Form1 : Form
         // 初始化托盘图标
         InitNotifyIcon();
 
-        // 投放机器人
-        if (ShowNamingDialog)
+        // 加载持久化机器人
+        var savedRobots = PersistenceManager.LoadRobots();
+        if (savedRobots.Count > 0)
         {
-            SpawnRobotsWithNaming(DefaultRobotCount);
+            foreach (var data in savedRobots)
+            {
+                RestoreRobot(data);
+                if (data.Id >= _robotIdCounter) _robotIdCounter = data.Id + 1;
+            }
+            ShowNotification($"成功找回 {savedRobots.Count} 个伙伴！");
         }
         else
         {
-            for (int i = 0; i < DefaultRobotCount; i++)
+            // 默认投放
+            if (ShowNamingDialog)
             {
-                string name = DefaultRobotCount == 1
-                    ? DefaultRobotName
-                    : $"{DefaultRobotName}-{i + 1}";
-                SpawnRobot(name, -1, -1);
+                SpawnRobotsWithNaming(DefaultRobotCount);
+            }
+            else
+            {
+                for (int i = 0; i < DefaultRobotCount; i++)
+                {
+                    string name = DefaultRobotCount == 1
+                        ? DefaultRobotName
+                        : $"{DefaultRobotName}-{i + 1}";
+                    SpawnRobot(name, -1, -1);
+                }
+            }
+        }
+        
+        // 自动打开所有终端
+        AutoOpenAllTerminals();
+    }
+
+    private void AutoOpenAllTerminals()
+    {
+        if (_robots.Count > 0)
+        {
+            var manager = TerminalManagerForm.Instance;
+            manager.Show();
+            foreach (var robot in _robots)
+            {
+                manager.OpenTerminal(robot);
             }
         }
     }
@@ -485,15 +515,17 @@ public partial class Form1 : Form
         for (int i = 0; i < _robots.Count; i++)
         {
             var robot = _robots[i];
+            if (!robot.IsVisible) continue;
+            
             robot.Update(screenWidth, screenHeight);
 
             // 检查与其他机器人的互动
             for (int j = i + 1; j < _robots.Count; j++)
             {
-                robot.InteractWith(_robots[j]);
+                if (_robots[j].IsVisible)
+                    robot.InteractWith(_robots[j]);
             }
         }
-
         this.Invalidate();
     }
 
@@ -504,7 +536,8 @@ public partial class Form1 : Form
 
         foreach (var robot in _robots)
         {
-            PixelRobotRenderer.DrawRobot(e.Graphics, robot);
+            if (robot.IsVisible)
+                PixelRobotRenderer.DrawRobot(e.Graphics, robot);
         }
     }
 
@@ -552,6 +585,7 @@ public partial class Form1 : Form
 
     private void ExitApplication()
     {
+        PersistenceManager.SaveRobots(_robots);
         _notifyIcon?.Dispose();
         _controlPanel?.Close();
         _settingsForm?.Close();
@@ -639,12 +673,61 @@ public partial class Form1 : Form
         _robots.Add(robot);
         _robotIdCounter++;
 
+        robot.OnGrowthUpdated += (r) => PersistenceManager.SaveRobots(_robots);
+        SkillManager.SaveRobotSkills(robot);
+
+        PersistenceManager.SaveRobots(_robots);
         ShowNotification($"Robot '{name}' deployed!");
+    }
+
+    private void RestoreRobot(RobotData data)
+    {
+        int screenWidth = Screen.PrimaryScreen!.Bounds.Width;
+        int screenHeight = Screen.PrimaryScreen!.Bounds.Height;
+        float x = new Random().Next(screenWidth - 100);
+        float y = new Random().Next(screenHeight - 100);
+
+        Robot robot = new Robot(data.Id, data.Name, x, y);
+        robot.Personality = data.Personality;
+        robot.ConsciousnessLevel = data.ConsciousnessLevel;
+        robot.Experience = data.Experience;
+        robot.InternalGuidelines = data.InternalGuidelines;
+        robot.Size = data.Size;
+        robot.SpeedMultiplier = data.SpeedMultiplier;
+        robot.PrimaryColor = Color.FromArgb(data.PrimaryColorR, data.PrimaryColorG, data.PrimaryColorB);
+        
+        // 优先加载专门的技能文件
+        var savedSkills = SkillManager.LoadRobotSkills(data.Id, data.Name);
+        if (savedSkills != null && savedSkills.Count > 0)
+        {
+            robot.Skills = savedSkills;
+        }
+        else if (data.Skills != null && data.Skills.Count > 0)
+        {
+            robot.Skills = data.Skills;
+        }
+
+        foreach (var insight in data.LearnedInsights) robot.LearnedInsights.Add(insight);
+
+        robot.OnGrowthUpdated += (r) => PersistenceManager.SaveRobots(_robots);
+
+        _robots.Add(robot);
     }
 
     public void ClearAllRobots()
     {
         _robots.Clear();
+        PersistenceManager.SaveRobots(_robots);
+    }
+
+    public void RemoveRobot(Robot robot)
+    {
+        if (_robots.Contains(robot))
+        {
+            robot.CloseTerminal();
+            _robots.Remove(robot);
+            PersistenceManager.SaveRobots(_robots);
+        }
     }
 
     public void ShowSettings()

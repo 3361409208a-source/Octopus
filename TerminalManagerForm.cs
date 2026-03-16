@@ -9,7 +9,10 @@ public class TerminalManagerForm : Form
 {
     private TabControl _tabControl;
     private Dictionary<Robot, ChatTab> _terminals = new Dictionary<Robot, ChatTab>();
+    private TabPage _worldChatPage;
+    private FlowLayoutPanel _worldMessagePanel;
     private static TerminalManagerForm? _instance;
+    private System.Windows.Forms.Timer _titleUpdateTimer;
 
     public static TerminalManagerForm Instance
     {
@@ -30,8 +33,8 @@ public class TerminalManagerForm : Form
 
     private void InitializeComponent()
     {
-        this.Text = "💬 机器人聊天室";
-        this.Size = new Size(500, 600);
+        this.Text = "💬 机器人社交中心";
+        this.Size = new Size(600, 700);
         this.StartPosition = FormStartPosition.CenterScreen;
         this.BackColor = Color.FromArgb(30, 30, 30);
 
@@ -43,8 +46,52 @@ public class TerminalManagerForm : Form
             Font = new Font("Microsoft YaHei", 10)
         };
 
+        // 初始化世界频道
+        _worldChatPage = new TabPage { Text = " 🌍 世界频道 ", BackColor = Color.FromArgb(25, 25, 25) };
+        _worldMessagePanel = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            AutoScroll = true,
+            BackColor = Color.FromArgb(15, 15, 15),
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false,
+            Padding = new Padding(10)
+        };
+        _worldChatPage.Controls.Add(_worldMessagePanel);
+        _tabControl.TabPages.Add(_worldChatPage);
+
         this.Controls.Add(_tabControl);
         this.FormClosing += (s, e) => { e.Cancel = true; this.Hide(); };
+
+        // 实时更新 Token 显示在标题栏
+        _titleUpdateTimer = new System.Windows.Forms.Timer { Interval = 1000 };
+        _titleUpdateTimer.Tick += (s, e) => {
+            this.Text = $"💬 机器人社交中心 | 🪙 Token: {AiService.TotalTokensUsed:N0}";
+        };
+        _titleUpdateTimer.Start();
+    }
+
+    public void BroadcastToWorld(string sender, string message, Color color)
+    {
+        if (_worldMessagePanel.InvokeRequired)
+        {
+            _worldMessagePanel.Invoke(new Action(() => BroadcastToWorld(sender, message, color)));
+            return;
+        }
+
+        var logLabel = new Label
+        {
+            Text = $"[{DateTime.Now:HH:mm:ss}] {sender}: {message}",
+            ForeColor = color,
+            Font = new Font("Microsoft YaHei", 9, FontStyle.Bold),
+            AutoSize = true,
+            Dock = DockStyle.Top,
+            Padding = new Padding(0, 2, 0, 2),
+            MaximumSize = new Size(_worldMessagePanel.Width - 30, 0)
+        };
+        
+        _worldMessagePanel.Controls.Add(logLabel);
+        _worldMessagePanel.ScrollControlIntoView(logLabel);
     }
 
     public void OpenTerminal(Robot robot)
@@ -81,6 +128,9 @@ public class ChatTab
     private TabPage _tabPage;
     private FlowLayoutPanel _messagePanel;
     private TextBox _inputBox;
+    private Label _growthStatus;
+    private FlowLayoutPanel _insightPanel;
+    private FlowLayoutPanel _skillPanel;
 
     public TabPage TabPage => _tabPage;
 
@@ -89,10 +139,53 @@ public class ChatTab
         _robot = robot;
         _tabPage = new TabPage { Text = $"  {robot.Name}  ", BackColor = Color.FromArgb(30, 30, 30) };
         
-        var mainLayout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2 };
-        mainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 50));
+        // 主布局
+        var mainLayout = new TableLayoutPanel { 
+            Dock = DockStyle.Fill, 
+            RowCount = 3,
+            ColumnCount = 1,
+            BackColor = Color.FromArgb(30, 30, 30)
+        };
+        mainLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        
+        // 1. 成长面板
+        var growthPanel = new Panel { 
+            Dock = DockStyle.Fill, 
+            BackColor = Color.FromArgb(45, 45, 45),
+            Padding = new Padding(10)
+        };
+        
+        _growthStatus = new Label {
+            Text = $"意识等级: Lvl {robot.ConsciousnessLevel:F1} | XP: {robot.Experience}/100",
+            ForeColor = Color.SpringGreen,
+            Font = new Font("Microsoft YaHei", 10, FontStyle.Bold),
+            Dock = DockStyle.Top,
+            AutoSize = true
+        };
 
+        _skillPanel = new FlowLayoutPanel {
+            Dock = DockStyle.Bottom,
+            Height = 40,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            BackColor = Color.Transparent,
+            AutoScroll = true
+        };
+
+        _insightPanel = new FlowLayoutPanel {
+            Dock = DockStyle.Fill,
+            AutoScroll = true,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            BackColor = Color.Transparent,
+            Padding = new Padding(0, 5, 0, 0)
+        };
+
+        growthPanel.Controls.Add(_insightPanel);
+        growthPanel.Controls.Add(_skillPanel);
+        growthPanel.Controls.Add(_growthStatus);
+
+        // 2. 消息面板 (改为普通的 Panel 嵌套，避免 FlowLayoutPanel 宽度计算错误)
         _messagePanel = new FlowLayoutPanel
         {
             Dock = DockStyle.Fill,
@@ -102,17 +195,32 @@ public class ChatTab
             WrapContents = false,
             Padding = new Padding(10)
         };
-        _messagePanel.SizeChanged += (s, e) => {
-            foreach (Control c in _messagePanel.Controls) c.Width = _messagePanel.ClientSize.Width - 25;
-        };
 
+        // 3. 输入框
         _inputBox = new TextBox
         {
             Dock = DockStyle.Fill,
             BackColor = Color.FromArgb(40, 40, 40),
             ForeColor = Color.White,
             BorderStyle = BorderStyle.FixedSingle,
-            Font = new Font("Microsoft YaHei", 11)
+            Font = new Font("Microsoft YaHei", 11),
+            Margin = new Padding(5)
+        };
+
+        mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 100)); // Index 0: Growth
+        mainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));  // Index 1: Messages
+        mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 45));  // Index 2: Input
+
+        mainLayout.Controls.Add(growthPanel, 0, 0);
+        mainLayout.Controls.Add(_messagePanel, 0, 1);
+        mainLayout.Controls.Add(_inputBox, 0, 2);
+
+        _tabPage.Controls.Add(mainLayout);
+
+        _messagePanel.SizeChanged += (s, e) => {
+            foreach (Control c in _messagePanel.Controls) {
+                if (c is TableLayoutPanel) c.Width = _messagePanel.ClientSize.Width - 25;
+            }
         };
 
         _inputBox.KeyDown += (s, e) =>
@@ -124,16 +232,57 @@ public class ChatTab
             }
         };
 
-        mainLayout.Controls.Add(_messagePanel, 0, 0);
-        mainLayout.Controls.Add(_inputBox, 0, 1);
-        _tabPage.Controls.Add(mainLayout);
-
         _robot.OnChatMessageReceived += HandleChatMessage;
+        _robot.OnTerminalOutput += HandleTerminalOutput;
+        _robot.OnGrowthUpdated += (r) => UpdateGrowthUI();
+        
+        UpdateGrowthUI();
         
         // 加载历史（历史消息目前不带思考过程，仅显示回复）
         foreach(var msg in _robot.ChatHistory)
         {
             HandleChatMessage(msg.role, msg.content, "");
+        }
+    }
+
+    private void UpdateGrowthUI()
+    {
+        if (_tabPage.InvokeRequired)
+        {
+            _tabPage.Invoke(new Action(UpdateGrowthUI));
+            return;
+        }
+
+        _growthStatus.Text = $"意识等级: Lvl {_robot.ConsciousnessLevel:F1} | XP: {_robot.Experience}/100\n行为准则: {_robot.InternalGuidelines}";
+        _insightPanel.Controls.Clear();
+        foreach (var insight in _robot.LearnedInsights)
+        {
+            var insightChip = new Label {
+                Text = insight,
+                AutoSize = true,
+                BackColor = Color.FromArgb(60, 60, 60),
+                ForeColor = Color.WhiteSmoke,
+                Font = new Font("Microsoft YaHei", 8),
+                Padding = new Padding(5),
+                BorderStyle = BorderStyle.FixedSingle,
+                Margin = new Padding(0, 0, 5, 0)
+            };
+            _insightPanel.Controls.Add(insightChip);
+        }
+
+        // 更新技能显示
+        _skillPanel.Controls.Clear();
+        foreach (var skill in _robot.Skills.Values)
+        {
+            var skillDisplay = new Label {
+                Text = $"{skill.Name} Lvl.{skill.Level} ({skill.Experience}/{skill.NextLevelXp})",
+                AutoSize = true,
+                ForeColor = Color.SkyBlue,
+                Font = new Font("Microsoft YaHei", 8, FontStyle.Bold),
+                Padding = new Padding(10, 0, 15, 0),
+                Margin = new Padding(0, 5, 0, 0)
+            };
+            _skillPanel.Controls.Add(skillDisplay);
         }
     }
 
@@ -143,7 +292,60 @@ public class ChatTab
         if (string.IsNullOrEmpty(text)) return;
         
         _inputBox.Clear();
+
+        // 处理特殊命令
+        if (text.StartsWith("/"))
+        {
+            HandleInternalCommand(text);
+            return;
+        }
+        
         _robot.SendUserMessage(text).ConfigureAwait(false);
+    }
+
+    private void HandleInternalCommand(string cmd)
+    {
+        string log = "";
+        switch (cmd.ToLower())
+        {
+            case "/log-social":
+                _robot.LogSocialInteractions = !_robot.LogSocialInteractions;
+                log = _robot.LogSocialInteractions ? "已开启社交日志" : "已隐藏社交日志";
+                break;
+            case "/status":
+                log = $"状态: {_robot.StatusMessage} | 动作: {(_robot.IsMoving ? "移动中" : "静止")}";
+                break;
+            case "/help":
+                log = "可用指令:\n/log-social - 切换社交对话显示\n/status - 查看状态\n/help - 显示此帮助";
+                break;
+            default:
+                log = "未知指令。输入 /help 查看列表。";
+                break;
+        }
+        HandleTerminalOutput(log);
+    }
+
+    private void HandleTerminalOutput(string text)
+    {
+        if (_messagePanel.InvokeRequired)
+        {
+            _messagePanel.Invoke(new Action(() => HandleTerminalOutput(text)));
+            return;
+        }
+
+        var logLabel = new Label
+        {
+            Text = text.StartsWith("[") ? text : $"[SYS] {text}",
+            ForeColor = text.Contains("[SOCIAL]") ? Color.LightBlue : Color.Gray,
+            Font = new Font("Microsoft YaHei", 9, FontStyle.Italic),
+            AutoSize = true,
+            Dock = DockStyle.Top,
+            Padding = new Padding(10, 2, 0, 2),
+            Margin = new Padding(0)
+        };
+        
+        _messagePanel.Controls.Add(logLabel);
+        _messagePanel.ScrollControlIntoView(logLabel);
     }
 
     private void HandleChatMessage(string role, string content, string thought)

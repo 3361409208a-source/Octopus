@@ -53,14 +53,16 @@ public class ControlPanelForm : Form
             Font = new Font("Segoe UI", 10)
         };
 
-        _robotListView.Columns.Add("ID", 50);
-        _robotListView.Columns.Add("名称", 120);
+        _robotListView.Columns.Add("ID", 40);
+        _robotListView.Columns.Add("名称", 100);
+        _robotListView.Columns.Add("个性", 80);
         _robotListView.Columns.Add("状态", 80);
-        _robotListView.Columns.Add("终端", 80);
-        _robotListView.Columns.Add("可见", 60);
-        _robotListView.Columns.Add("位置", 120);
-        _robotListView.Columns.Add("速度", 80);
-        _robotListView.Columns.Add("大小", 60);
+        _robotListView.Columns.Add("意识", 70);
+        _robotListView.Columns.Add("经验", 70);
+        _robotListView.Columns.Add("位置", 100);
+        _robotListView.Columns.Add("速度", 60);
+        _robotListView.Columns.Add("大小", 50);
+        _robotListView.Columns.Add("显示", 60);
 
         _robotListView.MouseDoubleClick += RobotListView_MouseDoubleClick;
 
@@ -168,11 +170,23 @@ public class ControlPanelForm : Form
                 var robot = _robotListView.SelectedItems[0].Tag as Robot;
                 if (robot != null)
                 {
-                    contextMenu.Items.Add("📺 打开终端", null, (s2, e2) => robot.OpenTerminal());
-                    contextMenu.Items.Add("🗕 关闭终端", null, (s2, e2) => robot.CloseTerminal());
+                    contextMenu.Items.Add("📺 打开聊天室", null, (s2, e2) => robot.OpenTerminal());
+                    contextMenu.Items.Add("✏️ 编辑机器人", null, (s2, e2) => ShowEditDialog(robot));
                     contextMenu.Items.Add(new ToolStripSeparator());
+                    
                     var status = robot.IsMoving ? "⏸ 暂停" : "▶ 启动";
                     contextMenu.Items.Add(status, null, (s2, e2) => robot.IsMoving = !robot.IsMoving);
+                    
+                    var visibility = robot.IsVisible ? "👻 隐藏" : "👁️ 显示";
+                    contextMenu.Items.Add(visibility, null, (s2, e2) => robot.IsVisible = !robot.IsVisible);
+
+                    contextMenu.Items.Add(new ToolStripSeparator());
+                    contextMenu.Items.Add("❌ 删除该机器人", null, (s2, e2) => {
+                        if (MessageBox.Show($"确定要删除 {robot.Name} 吗？", "警告", 
+                            MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes) {
+                            _mainForm.RemoveRobot(robot);
+                        }
+                    });
                 }
             }
         };
@@ -214,15 +228,14 @@ public class ControlPanelForm : Form
         {
             var item = new ListViewItem(robot.Id.ToString());
             item.SubItems.Add(robot.Name);
-            item.SubItems.Add(robot.IsMoving ? "▶ 移动中" : "⏸ 已暂停");
-
-            // 终端状态（统一管理，不再单独显示）
-            item.SubItems.Add("-");
-            item.SubItems.Add("-");
-
+            item.SubItems.Add(robot.Personality);
+            item.SubItems.Add(robot.IsMoving ? "▶ 移动" : "⏸ 暂停");
+            item.SubItems.Add($"Lvl {robot.ConsciousnessLevel:F1}");
+            item.SubItems.Add($"{robot.Experience}/100");
             item.SubItems.Add($"({robot.X:F0}, {robot.Y:F0})");
             item.SubItems.Add($"{robot.SpeedMultiplier:F1}x");
             item.SubItems.Add($"{robot.Size}px");
+            item.SubItems.Add(robot.IsVisible ? "👁️" : "👻");
             item.Tag = robot;
             _robotListView.Items.Add(item);
 
@@ -237,7 +250,7 @@ public class ControlPanelForm : Form
         if (statsLabel != null && robots.Count > 0)
         {
             avgSpeed /= robots.Count;
-            statsLabel.Text = $"总数: {robots.Count} | 移动中: {movingCount} | 已暂停: {pausedCount} | 平均速度: {avgSpeed:F1}x";
+            statsLabel.Text = $"总数: {robots.Count} | 移动中: {movingCount} | 已暂停: {pausedCount} | 平均速度: {avgSpeed:F1}x | 🪙 Token 使用: {AiService.TotalTokensUsed:N0}";
         }
         else if (statsLabel != null)
         {
@@ -312,8 +325,64 @@ public class ControlPanelForm : Form
         if (_robotListView.SelectedItems.Count > 0)
         {
             var robot = _robotListView.SelectedItems[0].Tag as Robot;
-            robot?.OpenTerminal();
+            if (robot != null) ShowEditDialog(robot);
         }
+    }
+
+    private void ShowEditDialog(Robot robot)
+    {
+        using var dialog = new Form
+        {
+            Text = $"编辑机器人: {robot.Name} (ID: {robot.Id})",
+            Size = new Size(400, 500),
+            StartPosition = FormStartPosition.CenterParent,
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            BackColor = Color.FromArgb(40, 40, 40),
+            ForeColor = Color.White
+        };
+
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, Padding = new Padding(20) };
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 35));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 65));
+
+        void AddRow(string labelText, Control input)
+        {
+            layout.Controls.Add(new Label { Text = labelText, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleRight });
+            input.Dock = DockStyle.Fill;
+            layout.Controls.Add(input);
+        }
+
+        var nameInput = new TextBox { Text = robot.Name };
+        var personalityInput = new TextBox { Text = robot.Personality };
+        var sizeInput = new NumericUpDown { Minimum = 32, Maximum = 256, Value = robot.Size };
+        var speedInput = new NumericUpDown { Minimum = 0, Maximum = 500, Value = (decimal)(robot.SpeedMultiplier * 100) };
+        var levelInput = new NumericUpDown { Minimum = 1, Maximum = 100, Value = (decimal)robot.ConsciousnessLevel, DecimalPlaces = 1 };
+        var guidelineInput = new TextBox { Text = robot.InternalGuidelines, Multiline = true, Height = 60 };
+
+        AddRow("名称:", nameInput);
+        AddRow("个性:", personalityInput);
+        AddRow("大小 (px):", sizeInput);
+        AddRow("速度 (%):", speedInput);
+        AddRow("意识等级:", levelInput);
+        AddRow("行为准则:", guidelineInput);
+
+        var btnOk = new Button { Text = "保存修改", Dock = DockStyle.Bottom, Height = 40, BackColor = Color.Lime, ForeColor = Color.Black, FlatStyle = FlatStyle.Flat };
+        btnOk.Click += (s, e) => {
+            robot.Name = nameInput.Text;
+            robot.Personality = personalityInput.Text;
+            robot.Size = (int)sizeInput.Value;
+            robot.SpeedMultiplier = (float)speedInput.Value / 100f;
+            robot.ConsciousnessLevel = (double)levelInput.Value;
+            robot.InternalGuidelines = guidelineInput.Text;
+            
+            robot.SaveSkills(); // 触发保存
+            PersistenceManager.SaveRobots(_mainForm.GetRobots());
+            dialog.DialogResult = DialogResult.OK;
+        };
+
+        dialog.Controls.Add(layout);
+        dialog.Controls.Add(btnOk);
+        dialog.ShowDialog();
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
