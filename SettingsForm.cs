@@ -13,11 +13,22 @@ public class SettingsForm : Form
     public int RobotSpeed { get; set; } = 100;
     public string RobotName { get; set; } = "Claude";
     public bool AutoStart { get; set; } = false;
+    public bool EnableAiThinking { get; set; } = false;
+    public int AiThoughtFrequency { get; set; } = 60; // 默认 60 秒
+    public int FightFrequency { get; set; } = 15; // 默认 15% 几率打架
+    public bool IsWeaponMaster { get; set; } = false; // 武器大师模式
 
 
     private NumericUpDown _countInput;
     private NumericUpDown _sizeInput;
     private NumericUpDown _speedInput;
+    private TextBox _nameInput;
+    private CheckBox _namingCheck;
+    private CheckBox _autoStartCheck;
+    private CheckBox _enableAiThinkingCheck;
+    private NumericUpDown _aiFrequencyInput;
+    private NumericUpDown _fightFreqInput;
+    private CheckBox _isWeaponMasterCheck;
 
 
     public SettingsForm()
@@ -50,7 +61,7 @@ public class SettingsForm : Form
         mainContainer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
         mainContainer.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // 标题
         mainContainer.RowStyles.Add(new RowStyle(SizeType.Percent, 100F)); // 内容区域
-        mainContainer.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // 按钮区域
+        mainContainer.RowStyles.Add(new RowStyle(SizeType.Absolute, 60F)); // 按钮区域
 
         // 标题
         var titleLabel = new Label
@@ -76,7 +87,7 @@ public class SettingsForm : Form
         {
             Dock = DockStyle.Top,
             Padding = new Padding(0),
-            RowCount = 7,
+            RowCount = 12, // 增加行数以容纳新项
             ColumnCount = 2,
             BackColor = Color.FromArgb(40, 40, 40),
             AutoSize = true,
@@ -159,6 +170,54 @@ public class SettingsForm : Form
         };
         tableLayoutPanel.Controls.Add(_autoStartCheck, 1, 5);
 
+        // 开启 AI 思考
+        tableLayoutPanel.Controls.Add(CreateLabel("开启 AI 自主思考:"), 0, 6);
+        _enableAiThinkingCheck = new CheckBox
+        {
+            Text = "允许机器人随机产生想法",
+            Checked = false,
+            ForeColor = Color.White,
+            AutoSize = true
+        };
+        tableLayoutPanel.Controls.Add(_enableAiThinkingCheck, 1, 6);
+
+        // AI 思考频率
+        tableLayoutPanel.Controls.Add(CreateLabel("思考频率 (秒):"), 0, 7);
+        _aiFrequencyInput = new NumericUpDown
+        {
+            Minimum = 10,
+            Maximum = 3600,
+            Value = 60,
+            Width = 100,
+            BackColor = Color.FromArgb(60, 60, 60),
+            ForeColor = Color.White
+        };
+        tableLayoutPanel.Controls.Add(_aiFrequencyInput, 1, 7);
+
+        // 打架频率
+        tableLayoutPanel.Controls.Add(CreateLabel("互动打架几率 (%):"), 0, 8);
+        _fightFreqInput = new NumericUpDown
+        {
+            Minimum = 0,
+            Maximum = 100,
+            Value = 15,
+            Width = 100,
+            BackColor = Color.FromArgb(60, 60, 60),
+            ForeColor = Color.White
+        };
+        tableLayoutPanel.Controls.Add(_fightFreqInput, 1, 8);
+
+        // 武器大师模式
+        tableLayoutPanel.Controls.Add(CreateLabel("武器大师模式:"), 0, 9);
+        _isWeaponMasterCheck = new CheckBox
+        {
+            Text = "开启世界机器人大战 (实体子弹)",
+            Checked = false,
+            ForeColor = Color.Orange,
+            AutoSize = true
+        };
+        tableLayoutPanel.Controls.Add(_isWeaponMasterCheck, 1, 9);
+
 
 
 
@@ -172,14 +231,21 @@ public class SettingsForm : Form
             AutoSize = true,
             Margin = new Padding(0, 10, 0, 0)
         };
-        tableLayoutPanel.Controls.Add(infoLabel, 0, 6);
+        tableLayoutPanel.Controls.Add(infoLabel, 0, 10);
         tableLayoutPanel.SetColumnSpan(infoLabel, 2);
 
         // 调整表格布局高度
-        for (int i = 0; i < 7; i++)
-        {
-            tableLayoutPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        }
+        tableLayoutPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 40)); // 机器人数量
+        tableLayoutPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 40)); // 命名对话框
+        tableLayoutPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 40)); // 默认名字
+        tableLayoutPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 40)); // 默认大小
+        tableLayoutPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 40)); // 默认速度
+        tableLayoutPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 40)); // 自动启动
+        tableLayoutPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 40)); // 开启 AI 思考
+        tableLayoutPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 40)); // AI 思考频率
+        tableLayoutPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 40)); // 打架几率
+        tableLayoutPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 40)); // 武器大师
+        tableLayoutPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // 说明
 
         contentPanel.Controls.Add(tableLayoutPanel);
 
@@ -226,6 +292,9 @@ public class SettingsForm : Form
         mainContainer.Controls.Add(buttonPanel, 0, 2);
 
         this.Controls.Add(mainContainer);
+        
+        // 关键修复：确保按钮在最上层
+        buttonPanel.BringToFront();
 
         this.AcceptButton = btnSave;
         this.CancelButton = btnCancel;
@@ -274,6 +343,10 @@ public class SettingsForm : Form
                             case "DefaultSize": _sizeInput.Value = int.Parse(parts[1]); break;
                             case "DefaultSpeed": _speedInput.Value = int.Parse(parts[1]); break;
                             case "AutoStart": _autoStartCheck.Checked = bool.Parse(parts[1]); break;
+                            case "EnableAi": _enableAiThinkingCheck.Checked = bool.Parse(parts[1]); break;
+                            case "AiFreq": _aiFrequencyInput.Value = int.Parse(parts[1]); break;
+                            case "FightFreq": _fightFreqInput.Value = int.Parse(parts[1]); break;
+                            case "WeaponMaster": _isWeaponMasterCheck.Checked = bool.Parse(parts[1]); break;
 
                         }
                     }
@@ -291,6 +364,10 @@ public class SettingsForm : Form
         RobotSize = (int)_sizeInput.Value;
         RobotSpeed = (int)_speedInput.Value;
         AutoStart = _autoStartCheck.Checked;
+        EnableAiThinking = _enableAiThinkingCheck.Checked;
+        AiThoughtFrequency = (int)_aiFrequencyInput.Value;
+        FightFrequency = (int)_fightFreqInput.Value;
+        IsWeaponMaster = _isWeaponMasterCheck.Checked;
 
 
         // 保存到文件
@@ -306,6 +383,10 @@ public class SettingsForm : Form
                 $"DefaultSize={RobotSize}",
                 $"DefaultSpeed={RobotSpeed}",
                 $"AutoStart={AutoStart}",
+                $"EnableAi={EnableAiThinking}",
+                $"AiFreq={AiThoughtFrequency}",
+                $"FightFreq={FightFrequency}",
+                $"WeaponMaster={IsWeaponMaster}",
 
             };
             System.IO.File.WriteAllLines(settingsPath, lines);

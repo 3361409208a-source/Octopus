@@ -48,6 +48,12 @@ public partial class Form1 : Form
     public string DefaultRobotName { get; set; } = "小八";
     public int DefaultRobotCount { get; set; } = 1;
     public bool ShowNamingDialog { get; set; } = false; // 默认不显示命名对话框
+    public bool EnableAiThinking { get; set; } = false;
+    public int AiThoughtFrequency { get; set; } = 60;
+    public int FightFrequency { get; set; } = 15;
+    public bool IsWeaponMaster { get; set; } = false;
+
+    private List<Projectile> _projectiles = new List<Projectile>();
 
 
     // 设置窗口单例
@@ -76,12 +82,21 @@ public partial class Form1 : Form
         var savedRobots = PersistenceManager.LoadRobots();
         if (savedRobots.Count > 0)
         {
+            int restoredCount = 0;
             foreach (var data in savedRobots)
             {
-                RestoreRobot(data);
+                var robot = RestoreRobot(data);
+                if (restoredCount >= 5)
+                {
+                    robot.IsVisible = false;
+                }
+                
                 if (data.Id >= _robotIdCounter) _robotIdCounter = data.Id + 1;
+                restoredCount++;
             }
-            ShowNotification($"成功找回 {savedRobots.Count} 个伙伴！");
+            string msg = $"成功找回 {savedRobots.Count} 个伙伴！";
+            if (savedRobots.Count > 5) msg += " (超出5个已自动隐藏)";
+            ShowNotification(msg);
         }
         else
         {
@@ -97,7 +112,11 @@ public partial class Form1 : Form
                     string name = DefaultRobotCount == 1
                         ? DefaultRobotName
                         : $"{DefaultRobotName}-{i + 1}";
-                    SpawnRobot(name, -1, -1);
+                    var robot = SpawnRobot(name, -1, -1);
+                    if (i >= 5)
+                    {
+                        robot.IsVisible = false;
+                    }
                 }
             }
         }
@@ -177,6 +196,10 @@ public partial class Form1 : Form
                             case "DefaultName": DefaultRobotName = parts[1]; break;
                             case "DefaultSize": DefaultRobotSize = int.Parse(parts[1]); break;
                             case "DefaultSpeed": _globalSpeed = int.Parse(parts[1]); break;
+                            case "EnableAi": EnableAiThinking = bool.Parse(parts[1]); break;
+                            case "AiFreq": AiThoughtFrequency = int.Parse(parts[1]); break;
+                            case "FightFreq": FightFrequency = int.Parse(parts[1]); break;
+                            case "WeaponMaster": IsWeaponMaster = bool.Parse(parts[1]); break;
 
                         }
                     }
@@ -290,7 +313,11 @@ public partial class Form1 : Form
     {
         for (int i = 0; i < count; i++)
         {
-            SpawnRobotWithName();
+            var robot = SpawnRobotWithName();
+            if (robot != null && _robots.IndexOf(robot) >= 5)
+            {
+                robot.IsVisible = false;
+            }
         }
     }
 
@@ -525,20 +552,57 @@ public partial class Form1 : Form
         int screenWidth = Screen.PrimaryScreen!.Bounds.Width;
         int screenHeight = Screen.PrimaryScreen.Bounds.Height;
 
-        for (int i = 0; i < _robots.Count; i++)
+        // 1. 更新所有机器人位置与基本逻辑
+        foreach (var robot in _robots)
         {
-            var robot = _robots[i];
             if (!robot.IsVisible) continue;
-            
             robot.Update(screenWidth, screenHeight);
+            
+            // 武器大师模式下的状态提示
+            if (robot.IsWeaponMaster && (robot.StatusMessage == "IDLE" || robot.StatusMessage == "BATTLE")) 
+                robot.StatusMessage = "BATTLE";
+        }
 
-            // 检查与其他机器人的互动
-            for (int j = i + 1; j < _robots.Count; j++)
+        // 2. 独立更新子弹位置与碰撞检测 (每帧只处理一次)
+        for (int pIdx = _projectiles.Count - 1; pIdx >= 0; pIdx--)
+        {
+            var p = _projectiles[pIdx];
+            p.Update();
+            if (!p.IsActive) { _projectiles.RemoveAt(pIdx); continue; }
+
+            // 碰撞检测：遍历所有可能被击中的机器人
+            foreach (var target in _robots)
             {
-                if (_robots[j].IsVisible)
-                    robot.InteractWith(_robots[j]);
+                if (target == p.Owner || !target.IsVisible || !target.IsActive) continue;
+                
+                float pdx = p.X - (target.X + target.Size / 2);
+                float pdy = p.Y - (target.Y + target.Size / 2);
+                float distSq = pdx * pdx + pdy * pdy;
+                float radius = target.Size / 2.5f; // 稍微收缩碰撞体积，更精准
+
+                if (distSq < radius * radius)
+                {
+                    target.HandleProjectileHit(p);
+                    p.IsActive = false;
+                    break;
+                }
             }
         }
+
+        // 3. 处理机器人间的近距离社交/物理互动
+        for (int i = 0; i < _robots.Count; i++)
+        {
+            var r1 = _robots[i];
+            if (!r1.IsVisible || !r1.IsActive) continue;
+
+            for (int j = i + 1; j < _robots.Count; j++)
+            {
+                var r2 = _robots[j];
+                if (r2.IsVisible && r2.IsActive)
+                    r1.InteractWith(r2);
+            }
+        }
+
         this.Invalidate();
     }
 
@@ -551,6 +615,100 @@ public partial class Form1 : Form
         {
             if (robot.IsVisible)
                 PixelRobotRenderer.DrawRobot(e.Graphics, robot);
+        }
+
+        // 绘制子弹 (特效增强版)
+        var projectilesCopy = _projectiles.ToArray(); // 创建快照防止并发修改崩溃
+        foreach (var p in projectilesCopy)
+        {
+            if (p == null || !p.IsActive) continue;
+            e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+
+            switch (p.Type)
+            {
+                case "CANNON":
+                    // 渐变球体感
+                    using (var cannonBrush = new System.Drawing.Drawing2D.LinearGradientBrush(new RectangleF(p.X - 10, p.Y - 10, 20, 20), Color.FromArgb(60, 60, 60), Color.Black, 45f))
+                    {
+                        e.Graphics.FillEllipse(cannonBrush, p.X - 9, p.Y - 9, 18, 18);
+                    }
+                    e.Graphics.DrawEllipse(Pens.DimGray, p.X - 9, p.Y - 9, 18, 18);
+                    break;
+
+                case "LIGHTNING":
+                    // 绘制三层发光叠波闪电
+                    Color[] lightningColors = { Color.White, Color.Yellow, Color.FromArgb(150, Color.Gold) };
+                    float[] lightningWidths = { 1f, 3f, 6f };
+                    for (int layer = 2; layer >= 0; layer--)
+                    {
+                        using var pen = new Pen(lightningColors[layer], lightningWidths[layer]);
+                        float lx = p.X - p.Dx, ly = p.Y - p.Dy;
+                        Random rng = new Random((int)p.X + (int)p.Y + layer); // 固定种子保持帧间稳定感但随位置变
+                        for (int k = 0; k < 4; k++)
+                        {
+                            float nxtX = lx + p.Dx * 0.4f + rng.Next(-12, 12);
+                            float nxtY = ly + p.Dy * 0.4f + rng.Next(-12, 12);
+                            e.Graphics.DrawLine(pen, lx, ly, nxtX, nxtY);
+                            lx = nxtX; ly = nxtY;
+                        }
+                    }
+                    break;
+
+                case "SPIT":
+                    // 粘稠液体感
+                    using (var spitBrush = new SolidBrush(Color.FromArgb(160, Color.Chartreuse)))
+                    {
+                        e.Graphics.FillEllipse(spitBrush, p.X - 6, p.Y - 6, 12, 12);
+                        // 拖尾液滴
+                        e.Graphics.FillEllipse(spitBrush, p.X - p.Dx * 1.5f + 4, p.Y - p.Dy * 1.5f, 5, 5);
+                        e.Graphics.FillEllipse(spitBrush, p.X - p.Dx * 0.8f - 3, p.Y - p.Dy * 0.8f + 2, 4, 4);
+                    }
+                    break;
+
+                case "INK":
+                    // 墨水分离感
+                    using (var inkBrush = new SolidBrush(Color.FromArgb(200, Color.Indigo)))
+                    {
+                        float currentAngle = (float)Math.Atan2(p.Dy, p.Dx);
+                        e.Graphics.FillEllipse(inkBrush, p.X - 8, p.Y - 8, 16, 16);
+                        e.Graphics.FillEllipse(inkBrush, p.X + (float)Math.Cos(currentAngle + 0.5) * 10, p.Y + (float)Math.Sin(currentAngle + 0.5) * 10, 6, 6);
+                        e.Graphics.FillEllipse(inkBrush, p.X + (float)Math.Cos(currentAngle - 0.5) * 12, p.Y + (float)Math.Sin(currentAngle - 0.5) * 12, 5, 5);
+                    }
+                    break;
+
+                case "ROCKET":
+                    // 带有火光的火箭
+                    using (var rocketPath = new System.Drawing.Drawing2D.GraphicsPath())
+                    {
+                        float rSize = 10;
+                        rocketPath.AddRectangle(new RectangleF(p.X - rSize/2, p.Y - rSize/2, rSize, rSize));
+                        e.Graphics.FillPath(Brushes.DarkRed, rocketPath);
+                        // 尾部火焰
+                        using var fireBrush = new System.Drawing.Drawing2D.LinearGradientBrush(new PointF(p.X, p.Y), new PointF(p.X - p.Dx * 2, p.Y - p.Dy * 2), Color.Orange, Color.Transparent);
+                        e.Graphics.FillEllipse(fireBrush, p.X - p.Dx * 1.5f - 5, p.Y - p.Dy * 1.5f - 5, 10, 10);
+                    }
+                    break;
+
+                case "PLASMA":
+                    // 核心高能脉冲
+                    e.Graphics.FillEllipse(Brushes.White, p.X - 3, p.Y - 3, 6, 6);
+                    using (var pPen = new Pen(Color.FromArgb(150, p.ProjectileColor), 4))
+                    {
+                        e.Graphics.DrawEllipse(pPen, p.X - 7, p.Y - 7, 14, 14);
+                    }
+                    using (var outerPen = new Pen(Color.FromArgb(60, p.ProjectileColor), 8))
+                    {
+                        e.Graphics.DrawEllipse(outerPen, p.X - 10, p.Y - 10, 20, 20);
+                    }
+                    break;
+
+                default:
+                    using (var defBrush = new SolidBrush(p.ProjectileColor))
+                    {
+                        e.Graphics.FillEllipse(defBrush, p.X - 3, p.Y - 3, 6, 6);
+                    }
+                    break;
+            }
         }
     }
 
@@ -598,17 +756,36 @@ public partial class Form1 : Form
 
     private void ExitApplication()
     {
-        PersistenceManager.SaveRobots(_robots);
-        _notifyIcon?.Dispose();
-        _controlPanel?.Close();
-        _settingsForm?.Close();
+        try
+        {
+            PersistenceManager.SaveRobots(_robots);
+            
+            // 彻底清理终端
+            if (TerminalManagerForm.Instance != null)
+            {
+                TerminalManagerForm.Instance.Shutdown();
+            }
+
+            foreach (var robot in _robots)
+            {
+                robot.CloseTerminal();
+            }
+
+            _notifyIcon?.Dispose();
+            _controlPanel?.Close();
+            _settingsForm?.Close();
+        }
+        catch { }
+        
         Application.Exit();
+        // 强制确保所有后台线程也一起消失
+        Environment.Exit(0);
     }
 
     // 公共方法供控制面板使用
     public List<Robot> GetRobots() => _robots;
 
-    public void SpawnRobotWithName()
+    public Robot? SpawnRobotWithName()
     {
         using var nameDialog = new Form
         {
@@ -665,11 +842,12 @@ public partial class Form1 : Form
         {
             string name = textBox.Text.Trim();
             if (string.IsNullOrEmpty(name)) name = $"Robot-{_robotIdCounter:D3}";
-            SpawnRobot(name, -1, -1);
+            return SpawnRobot(name, -1, -1);
         }
+        return null;
     }
 
-    public void SpawnRobot(string name, float startX, float startY)
+    public Robot SpawnRobot(string name, float startX, float startY)
     {
         int screenWidth = Screen.PrimaryScreen!.Bounds.Width;
 
@@ -682,6 +860,10 @@ public partial class Form1 : Form
         Robot robot = new Robot(_robotIdCounter, name, startX, startY);
         robot.Size = DefaultRobotSize + new Random().Next(-10, 10);
         robot.SpeedMultiplier = _globalSpeed / 100f;
+        robot.EnableAiThinking = EnableAiThinking;
+        robot.AiThoughtFrequency = AiThoughtFrequency;
+        robot.FightFrequency = FightFrequency;
+        robot.IsWeaponMaster = IsWeaponMaster;
 
 
         _robots.Add(robot);
@@ -692,9 +874,10 @@ public partial class Form1 : Form
 
         PersistenceManager.SaveRobots(_robots);
         ShowNotification($"Robot '{name}' deployed!");
+        return robot;
     }
 
-    private void RestoreRobot(RobotData data)
+    private Robot RestoreRobot(RobotData data)
     {
         int screenWidth = Screen.PrimaryScreen!.Bounds.Width;
         int screenHeight = Screen.PrimaryScreen!.Bounds.Height;
@@ -708,6 +891,10 @@ public partial class Form1 : Form
         robot.InternalGuidelines = data.InternalGuidelines;
         robot.Size = data.Size;
         robot.SpeedMultiplier = data.SpeedMultiplier;
+        robot.EnableAiThinking = EnableAiThinking;
+        robot.AiThoughtFrequency = AiThoughtFrequency;
+        robot.FightFrequency = FightFrequency;
+        robot.IsWeaponMaster = IsWeaponMaster;
 
         robot.PrimaryColor = Color.FromArgb(data.PrimaryColorR, data.PrimaryColorG, data.PrimaryColorB);
 
@@ -727,8 +914,8 @@ public partial class Form1 : Form
 
 
         robot.OnGrowthUpdated += (r) => PersistenceManager.SaveRobots(_robots);
-
         _robots.Add(robot);
+        return robot;
     }
 
     public void ClearAllRobots()
@@ -756,6 +943,10 @@ public partial class Form1 : Form
             _settingsForm.RobotName = DefaultRobotName;
             _settingsForm.RobotSpeed = _globalSpeed;
             _settingsForm.ShowNamingDialog = ShowNamingDialog;
+            _settingsForm.EnableAiThinking = EnableAiThinking;
+            _settingsForm.AiThoughtFrequency = AiThoughtFrequency;
+            _settingsForm.FightFrequency = FightFrequency;
+            _settingsForm.IsWeaponMaster = IsWeaponMaster;
 
             
             _settingsForm.FormClosed += (sender, args) =>
@@ -766,9 +957,17 @@ public partial class Form1 : Form
                     DefaultRobotName = _settingsForm.RobotName;
                     _globalSpeed = _settingsForm.RobotSpeed;
                     ShowNamingDialog = _settingsForm.ShowNamingDialog;
+                    EnableAiThinking = _settingsForm.EnableAiThinking;
+                    AiThoughtFrequency = _settingsForm.AiThoughtFrequency;
+                    FightFrequency = _settingsForm.FightFrequency;
+                    IsWeaponMaster = _settingsForm.IsWeaponMaster;
 
 
                     foreach (var r in _robots) r.SpeedMultiplier = _globalSpeed / 100f;
+                    foreach (var r in _robots) r.EnableAiThinking = EnableAiThinking;
+                    foreach (var r in _robots) r.AiThoughtFrequency = AiThoughtFrequency;
+                    foreach (var r in _robots) r.FightFrequency = FightFrequency;
+                    foreach (var r in _robots) r.IsWeaponMaster = IsWeaponMaster;
                 }
                 _settingsForm = null;
             };
@@ -777,6 +976,14 @@ public partial class Form1 : Form
         else
         {
             _settingsForm.Activate();
+        }
+    }
+
+    public void AddProjectile(Projectile p)
+    {
+        if (p != null)
+        {
+            _projectiles.Add(p);
         }
     }
 
@@ -796,13 +1003,19 @@ public partial class Form1 : Form
 
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
-        // 注销全局热键
-        UnregisterHotKey(this.Handle, HOTKEY_ID_PAUSE);
+        // 如果不是由于 Application.Exit 引起的，则尝试调用统一退出逻辑
+        if (e.CloseReason == CloseReason.UserClosing)
+        {
+             ExitApplication();
+             return; // ExitApplication 会直接杀死进程
+        }
 
+        // 兜底清理逻辑
+        UnregisterHotKey(this.Handle, HOTKEY_ID_PAUSE);
         _moveTimer?.Stop();
         _moveTimer?.Dispose();
-
         _notifyIcon?.Dispose();
+        
         base.OnFormClosing(e);
     }
 }

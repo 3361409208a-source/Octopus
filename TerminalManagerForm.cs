@@ -10,7 +10,9 @@ public class TerminalManagerForm : Form
     private TabControl _tabControl;
     private Dictionary<Robot, ChatTab> _terminals = new Dictionary<Robot, ChatTab>();
     private TabPage _worldChatPage;
+    private TabPage _overviewPage;
     private FlowLayoutPanel _worldMessagePanel;
+    private FlowLayoutPanel _overviewPanel;
     private static TerminalManagerForm? _instance;
     private System.Windows.Forms.Timer _titleUpdateTimer;
 
@@ -58,17 +60,144 @@ public class TerminalManagerForm : Form
             Padding = new Padding(10)
         };
         _worldChatPage.Controls.Add(_worldMessagePanel);
+
+        // 初始化概览频道 (网格布局)
+        _overviewPage = new TabPage { Text = " 🤖 机器人概览 ", BackColor = Color.FromArgb(25, 25, 25) };
+        _overviewPanel = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            AutoScroll = true,
+            BackColor = Color.FromArgb(20, 20, 20),
+            Padding = new Padding(15),
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = true
+        };
+        _overviewPage.Controls.Add(_overviewPanel);
+
+        _tabControl.TabPages.Add(_overviewPage);
         _tabControl.TabPages.Add(_worldChatPage);
 
         this.Controls.Add(_tabControl);
-        this.FormClosing += (s, e) => { e.Cancel = true; this.Hide(); };
+        this.FormClosing += (s, e) => { 
+            if (e.CloseReason == CloseReason.UserClosing)
+            {
+                e.Cancel = true; 
+                this.Hide(); 
+            }
+        };
 
         // 实时更新 Token 显示在标题栏
         _titleUpdateTimer = new System.Windows.Forms.Timer { Interval = 1000 };
         _titleUpdateTimer.Tick += (s, e) => {
             this.Text = $"💬 机器人社交中心 | 🪙 Token: {AiService.TotalTokensUsed:N0}";
+            UpdateOverviewIfVisible();
         };
         _titleUpdateTimer.Start();
+    }
+
+    private void UpdateOverviewIfVisible()
+    {
+        if (_tabControl.SelectedTab == _overviewPage)
+        {
+            SyncOverview();
+        }
+    }
+
+    private void SyncOverview()
+    {
+        var robots = Form1.Instance?.GetRobots() ?? new List<Robot>();
+        
+        // 简单的差异更新：如果数量不一致或内容需要更新
+        if (_overviewPanel.Controls.Count != robots.Count)
+        {
+            _overviewPanel.Controls.Clear();
+            foreach (var robot in robots)
+            {
+                var card = CreateRobotCard(robot);
+                _overviewPanel.Controls.Add(card);
+            }
+        }
+        else
+        {
+            // 更新状态
+            for (int i = 0; i < robots.Count; i++)
+            {
+                var card = _overviewPanel.Controls[i] as Panel;
+                if (card != null && card.Tag is Robot r)
+                {
+                    var statusLabel = card.Controls.Find("status", true).FirstOrDefault() as Label;
+                    if (statusLabel != null)
+                    {
+                        statusLabel.Text = r.StatusMessage;
+                        statusLabel.ForeColor = r.IsAiSpeaking ? Color.Gold : Color.Gray;
+                    }
+                }
+            }
+        }
+    }
+
+    private Panel CreateRobotCard(Robot robot)
+    {
+        var card = new Panel
+        {
+            Size = new Size(130, 110),
+            BackColor = Color.FromArgb(45, 45, 45),
+            Margin = new Padding(5),
+            Padding = new Padding(5),
+            Tag = robot,
+            Cursor = Cursors.Hand
+        };
+
+        var nameLabel = new Label
+        {
+            Text = robot.Name,
+            ForeColor = Color.White,
+            Font = new Font("Microsoft YaHei", 10, FontStyle.Bold),
+            Dock = DockStyle.Top,
+            TextAlign = ContentAlignment.MiddleCenter,
+            Height = 30
+        };
+
+        var statusLabel = new Label
+        {
+            Name = "status",
+            Text = robot.StatusMessage,
+            ForeColor = Color.Gray,
+            Font = new Font("Consolas", 8),
+            Dock = DockStyle.Fill,
+            TextAlign = ContentAlignment.MiddleCenter
+        };
+
+        var lvLabel = new Label
+        {
+            Text = $"Lvl {robot.ConsciousnessLevel:F1}",
+            ForeColor = Color.Lime,
+            Font = new Font("Microsoft YaHei", 8),
+            Dock = DockStyle.Bottom,
+            TextAlign = ContentAlignment.MiddleCenter,
+            Height = 20
+        };
+
+        card.Controls.Add(statusLabel);
+        card.Controls.Add(nameLabel);
+        card.Controls.Add(lvLabel);
+
+        card.Click += (s, e) => OpenTerminal(robot);
+        card.DoubleClick += (s, e) => OpenTerminal(robot);
+        foreach (Control c in card.Controls) 
+        {
+            c.Click += (s, e) => OpenTerminal(robot);
+            c.DoubleClick += (s, e) => OpenTerminal(robot);
+        }
+
+        return card;
+    }
+
+    public void Shutdown()
+    {
+        // 彻底关闭自己，不触发隐藏逻辑
+        this.FormClosing -= null; // 清除之前的隐藏逻辑
+        this.Dispose();
     }
 
     public void BroadcastToWorld(string sender, string message, Color color)
