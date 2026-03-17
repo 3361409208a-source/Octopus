@@ -4,7 +4,13 @@ using System.Drawing;
 using System.Windows.Forms;
 using System.Linq;
 
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Threading;
+
 namespace CockroachPet;
+
+
 
 public class Robot
 {
@@ -46,6 +52,8 @@ public class Robot
     public int WarningTimer { get; set; } = 0;
     public event Action<string>? OnTerminalOutput;
     
+
+    
     // 特殊动画状态
     public string SpecialState { get; set; } = "NORMAL"; // NORMAL, SPINNING, HEART_EYES, BLUSH, SLEEPY, ANGRY, SHAKING
     public int SpecialStateTimer { get; set; } = 0;
@@ -64,6 +72,13 @@ public class Robot
     public string CurrentAttackType { get; set; } = "LASER"; // LASER, SHOCK, BURST
     public Robot? TargetRobot { get; set; }
 
+    // 物理互动 (扒拉、拉取、抛投)
+    public Robot? PhysicalTarget { get; set; }
+    public string PhysicalAction { get; set; } = "NONE"; // NONE, PUSH, PULL, GRAB, THROW
+    public int PhysicalTimer { get; set; } = 0;
+    public Robot? PullingMe { get; set; }
+    public bool IsBeingThrown { get; set; } = false;
+
     // 社交交互
     public string ChatText { get; set; } = "";
     private string _fullChatText = "";
@@ -71,6 +86,7 @@ public class Robot
     public int ChatTimer { get; set; } = 0;
     public List<(string role, string content)> ChatHistory { get; set; } = new();
     public List<(string sender, string content)> SocialHistory { get; set; } = new();
+    public bool IsAiSpeaking { get; set; } = false; // 标记是否正在进行正式AI对话
     public bool LogSocialInteractions { get; set; } = true;
     public Robot? MeetingTarget { get; set; }
     public int MeetingTimer { get; set; } = 0;
@@ -99,6 +115,13 @@ public class Robot
     public Dictionary<string, Skill> Skills { get; set; } = new Dictionary<string, Skill>();
     private SelfImprovingManager _selfImproving;
     public event Action<Robot>? OnGrowthUpdated;
+    
+    // 是否忙碌（正在进行互动/动画/AI思考）
+    public bool IsBusy => PhysicalAction != "NONE" || PullingMe != null || FightTarget != null || MeetingTarget != null || _isThinking || IsFiringLaser || IsBeingThrown;
+
+    // 自定义词库 (用户设置)
+    public List<string> CustomPhrases { get; set; } = new List<string>();
+    private int _customPhraseTimer = 300; // 约 10s 检查一次台词触发
 
     // 随机行为
     public int PauseTimer { get; set; } = 0;
@@ -196,9 +219,8 @@ public class Robot
                 
                 if (ChaseTimer % 60 == 0)
                 {
-                    string[] rages = { "站住！别跑！", "抓到你我就把你拆了！", "你给我回来！", "敢惹我？！" };
-                    ChatText = rages[Rand.Next(rages.Length)];
-                    ChatTimer = 60;
+                    string[] rages = { "嗷呜！", "受死吧！", "站住别跑！", "我要拆了你的主板！", "吃我一招！" };
+                    SetBark(rages[Rand.Next(rages.Length)], 60);
                 }
             }
             else
@@ -213,11 +235,63 @@ public class Robot
             if (ChaseTimer == 0) ChasingTarget = null;
         }
 
-        // 攻击目标追踪 (实时同步攻击点)
         if (IsFiringLaser && TargetRobot != null && TargetRobot.IsActive)
         {
-            LaserTargetX = TargetRobot.X + TargetRobot.Size / 2;
-            LaserTargetY = TargetRobot.Y + TargetRobot.Size / 2;
+            LaserTargetX = TargetRobot.X + (float)TargetRobot.Size / 2;
+            LaserTargetY = TargetRobot.Y + (float)TargetRobot.Size / 2;
+        }
+        else if (IsFiringLaser)
+        {
+            // 如果目标丢失或死亡，立即停止开火
+            IsFiringLaser = false;
+            TargetRobot = null;
+        }
+
+        // 被拉取/被抛投的物理限制
+        if (PullingMe != null)
+        {
+            if (!PullingMe.IsActive || PullingMe.PhysicalTarget != this)
+            {
+                PullingMe = null;
+            }
+            else
+            {
+                // 强制同步位置到拉取者的触手位置（由于还没有具体的触手绘制逻辑，先拉到中心）
+                float tx = PullingMe.X + PullingMe.Size / 2 - Size / 2;
+                float ty = PullingMe.Y + PullingMe.Size / 2 - Size / 2;
+                X = X * 0.7f + tx * 0.3f;
+                Y = Y * 0.7f + ty * 0.3f;
+            }
+        }
+
+        if (IsBeingThrown)
+        {
+            RotationAngle += 15;
+            if (X <= 0 || Y <= 0 || X >= screenWidth - Size || Y >= screenHeight - Size)
+            {
+                IsBeingThrown = false;
+                RotationAngle = 0;
+            }
+            
+            // 扔出去的阻力
+            Dx *= 0.98f;
+            Dy *= 0.98f;
+            if (Math.Abs(Dx) < 1 && Math.Abs(Dy) < 1) 
+            {
+                IsBeingThrown = false;
+                RotationAngle = 0;
+            }
+        }
+
+        if (PhysicalTimer > 0)
+        {
+            PhysicalTimer--;
+            if (PhysicalTimer == 0) 
+            {
+                if (PhysicalAction == "GRAB") PerformThrow();
+                PhysicalAction = "NONE"; 
+                PhysicalTarget = null;
+            }
         }
 
         if (!IsMoving && ChaseTimer <= 0) return;
@@ -300,6 +374,11 @@ public class Robot
         // 流式文字逻辑
         UpdateStreamingChat();
 
+        // 自定义台词随机触发（纯文字，与语音分离）
+        UpdateCustomPhrases();
+
+
+
         // AI 思考逻辑
         UpdateAiThinking();
 
@@ -353,13 +432,37 @@ public class Robot
         {
             EmojiBubbleTimer--;
         }
-        else if (Rand.Next(2000) < 3)
+        else if (!IsAiSpeaking && Rand.Next(2000) < 3)
         {
             string[] emojis = { "☕", "💡", "🎮", "🎵", "🍕", "⭐", "🔥", "💨" };
             CurrentEmoji = emojis[Rand.Next(emojis.Length)];
             EmojiBubbleTimer = Rand.Next(60, 120);
         }
     }
+
+    private void UpdateCustomPhrases()
+    {
+        // 纯台词系统：与语音完全分离，独立随机触发
+        if (CustomPhrases.Count == 0 || !IsActive || IsBusy) return;
+
+        if (_customPhraseTimer > 0)
+        {
+            _customPhraseTimer--;
+        }
+        else
+        {
+            // 30% 概率触发台词（只显示文字，不播放语音）
+            if (Rand.Next(100) < 30)
+            {
+                string phrase = CustomPhrases[Rand.Next(CustomPhrases.Count)];
+                SetBark(phrase, 120);
+                Console.WriteLine($"[CustomPhrase] {Name} 说: {phrase}");
+            }
+            _customPhraseTimer = Rand.Next(180, 600); // 6s ~ 20s 随机间隔
+        }
+    }
+
+
 
     private void UpdateAiThinking()
     {
@@ -389,6 +492,7 @@ public class Robot
 
         if (!string.IsNullOrEmpty(thought) && IsActive)
         {
+            IsAiSpeaking = true;
             LastAiThought = thought;
             _fullChatText = thought;
             ChatText = "";
@@ -409,6 +513,20 @@ public class Robot
                 _streamCounter = 0;
             }
         }
+        else if (IsAiSpeaking && ChatTimer == 0)
+        {
+            IsAiSpeaking = false; // 对话结束
+        }
+    }
+
+    public void SetBark(string text, int duration = 90)
+    {
+        // 如果正在进行正式AI对话，则忽略无关紧要的默认气泡
+        if (IsAiSpeaking) return;
+        
+        _fullChatText = text;
+        ChatText = text; // Bark 不需要流式
+        ChatTimer = duration;
     }
 
     public async Task SendUserMessage(string message)
@@ -420,11 +538,13 @@ public class Robot
         if (ChatHistory.Count > 10) ChatHistory.RemoveAt(0);
 
         _isThinking = true;
+        IsAiSpeaking = true;
         // 视觉提示
         _fullChatText = "想着呢...";
         ChatText = "";
         _streamCounter = 0;
         ChatTimer = 60;
+
 
         // 加载自愈/进化记忆 (HOT tier)
         string selfImproCtx = _selfImproving.GetHotMemory() + "\n" + _selfImproving.GetSoulSteering();
@@ -444,7 +564,8 @@ public class Robot
         _isThinking = false;
         ChatHistory.Add(("assistant", response));
         if (ChatHistory.Count > 10) ChatHistory.RemoveAt(0);
-
+        
+        IsAiSpeaking = true;
         _fullChatText = response;
         ChatText = "";
         _streamCounter = 0;
@@ -527,6 +648,7 @@ public class Robot
     public void InteractWith(Robot other)
     {
         if (SocialCooldown > 0 || other.SocialCooldown > 0) return;
+        if (IsBusy || other.IsBusy) return; // 忙碌中的机器人不主动发起新互动
 
         float dx = other.X - X;
         float dy = other.Y - Y;
@@ -534,14 +656,36 @@ public class Robot
 
         if (dist < 45) // 非常近：碰撞反弹或互动
         {
-            int action = Rand.Next(10);
-            if (action < 3) // 30% 概率触发AI对话
+            int action = Rand.Next(15);
+            if (action < 3) // 20% AI对话
             {
                 TriggerSocialMeeting(other);
             }
-            else if (action < 6) // 30% 概率直接开打
+            else if (action < 5) // 13% 吵架
             {
                 StartFight(other);
+            }
+            else if (action < 7) // 扒拉 (Push)
+            {
+                PerformPush(other);
+            }
+            else if (action < 9) // 拉取 (Pull)
+            {
+                PerformPull(other);
+            }
+            else if (action < 11) // 抛投 (Grab & Throw)
+            {
+                PerformGrab(other);
+            }
+            else if (action < 13) // 远程攻击 (激光/闪电/墨汁)
+            {
+                string[] attacks = { "LASER", "SHOCK", "BURST", "INK_BLAST" };
+                CurrentAttackType = attacks[Rand.Next(attacks.Length)];
+                TargetRobot = other;
+                LaserTargetX = other.X + other.Size/2;
+                LaserTargetY = other.Y + other.Size/2;
+                IsFiringLaser = true;
+                _ = Task.Delay(1500).ContinueWith(_ => IsFiringLaser = false);
             }
             else // 物理碰撞反弹
             {
@@ -568,16 +712,14 @@ public class Robot
         {
             FollowingTarget = other;
             FollowTimer = Rand.Next(100, 300);
-            ChatText = $"等我一下，{other.Name}！";
-            ChatTimer = 90;
+            SetBark($"等我一下，{other.Name}！", 90);
         }
     }
 
     private void LaunchRemoteAttack(Robot other)
     {
         string[] attackBarks = { "看招！炸裂吧！💥", "吃我一记像素光波！⚡", "系统过载灌入！🔥", "目标锁定，发射！🎯", "吃我一记禁言锤！🔨", "像素风暴攻击！🌀" };
-        ChatText = attackBarks[Rand.Next(attackBarks.Length)];
-        ChatTimer = 100;
+        SetBark(attackBarks[Rand.Next(attackBarks.Length)], 100);
         SpecialState = "ANGRY";
         SpecialStateTimer = 100;
         ShootCooldown = 800;
@@ -588,8 +730,10 @@ public class Robot
         TargetRobot = other;
         
         IsFiringLaser = true;
-        LaserTargetX = other.X + other.Size / 2;
-        LaserTargetY = other.Y + other.Size / 2;
+        
+        // 确保攻击点瞬间锁定
+        LaserTargetX = other.X + (float)other.Size / 2;
+        LaserTargetY = other.Y + (float)other.Size / 2;
         
         // 延迟触发被攻击者的反应
         Task.Delay(400).ContinueWith(_ => {
@@ -600,8 +744,7 @@ public class Robot
                 other.SpecialStateTimer = 120;
                 
                 string[] reactBarks = { "哎哟！谁偷袭我？！", "我的电路着火了！", "你会付出代价的！", "发生错误！痛死我了！", "嗷呜！" };
-                other.ChatText = reactBarks[Rand.Next(reactBarks.Length)];
-                other.ChatTimer = 120;
+                other.SetBark(reactBarks[Rand.Next(reactBarks.Length)], 120);
                 
                 // 被攻击者开始追逐
                 other.ChasingTarget = this;
@@ -609,6 +752,74 @@ public class Robot
             }
             TargetRobot = null;
         });
+    }
+
+    private void PerformPush(Robot other)
+    {
+        SetBark("给我起开！", 60);
+        PhysicalTarget = other;
+        PhysicalAction = "PUSH";
+        PhysicalTimer = 60;
+
+        float ox = other.X - X;
+        float oy = other.Y - Y;
+        float odist = (float)Math.Max(1, Math.Sqrt(ox * ox + oy * oy));
+        other.Dx = (ox / odist) * 12 * other.SpeedMultiplier;
+        other.Dy = (oy / odist) * 12 * other.SpeedMultiplier;
+        other.SpecialState = "SHAKING";
+        other.SpecialStateTimer = 30;
+    }
+
+    private void PerformPull(Robot other)
+    {
+        SetBark("过来吧你！", 60);
+        PhysicalTarget = other;
+        PhysicalAction = "PULL";
+        PhysicalTimer = 60;
+        other.PullingMe = this;
+    }
+
+    private void PerformGrab(Robot other)
+    {
+        SetBark("抓到你了！", 40);
+        PhysicalTarget = other;
+        PhysicalAction = "GRAB";
+        PhysicalTimer = 40; // 抓稳需要点时间
+        other.PullingMe = this;
+    }
+
+    private void PerformThrow()
+    {
+        if (PhysicalTarget == null || !PhysicalTarget.IsActive) return;
+        
+        SetBark("走你！", 60);
+
+        // 尝试寻找第三个幸运儿
+        Robot? thirdObj = Form1.Instance.GetRobots()
+            .Where(r => r != this && r != PhysicalTarget && r.IsVisible)
+            .OrderBy(r => Math.Abs(r.X - X) + Math.Abs(r.Y - Y))
+            .FirstOrDefault();
+
+        float tx, ty;
+        if (thirdObj != null)
+        {
+            tx = thirdObj.X - X;
+            ty = thirdObj.Y - Y;
+        }
+        else
+        {
+            tx = Rand.Next(-200, 200);
+            ty = Rand.Next(-200, 200);
+        }
+
+        float dist = (float)Math.Max(1, Math.Sqrt(tx * tx + ty * ty));
+        PhysicalTarget.Dx = (tx / dist) * 25 * PhysicalTarget.SpeedMultiplier;
+        PhysicalTarget.Dy = (ty / dist) * 25 * PhysicalTarget.SpeedMultiplier;
+        PhysicalTarget.IsBeingThrown = true;
+        PhysicalTarget.PullingMe = null;
+        
+        // 播报到世界频道
+        TerminalManagerForm.Instance.BroadcastToWorld(Name, $"🤼 将 {PhysicalTarget.Name} 像垃圾一样扔了出去！", Color.Orange);
     }
 
     private async void StartFight(Robot other)
@@ -632,27 +843,33 @@ public class Robot
 
     public async Task SpeakInsult(string text, Robot target)
     {
+        IsAiSpeaking = true;
         ChatText = text;
         ChatTimer = 120; // 稍长一点方便阅读
         SpecialState = "ANGRY";
         SpecialStateTimer = 120;
         
-        LogSocial(Name, $"[实名辱骂] {text}");
+        LogSocial(Name, text, true);
 
         // 直接触发对方的接收逻辑 (带一点反应延迟)
         _ = Task.Delay(2000).ContinueWith(_ => {
             if (target.IsActive) target.ReceiveFightMessageAsync(Name, text, this);
         });
+
+        LogSocial(Name, text, true);
     }
+
+
+
+
+
+
 
     public async Task ReceiveFightMessageAsync(string senderName, string message, Robot sender)
     {
         if (!IsActive || FightRounds <= 0) return;
-
-        // 吵架内容发送到世界频道
-        TerminalManagerForm.Instance.BroadcastToWorld(senderName, $"💥 {message}", Color.OrangeRed);
         
-        LogSocial(senderName, $"[被点名] {message}");
+        LogSocial(senderName, $"💥 {message}", false);
         
         // 表现受打击或愤怒
         SpecialState = "SHAKING";
@@ -677,8 +894,7 @@ public class Robot
         }
         else
         {
-            ChatText = $"{senderName}，懒得理你了！";
-            ChatTimer = 120;
+            SetBark($"{senderName}，懒得理你了！", 120);
             FightTarget = null;
         }
     }
@@ -705,6 +921,7 @@ public class Robot
             initialMsg = result;
         }
 
+        IsAiSpeaking = true;
         ChatText = initialMsg;
         ChatTimer = 120;
         LogSocial(Name, initialMsg);
@@ -717,7 +934,7 @@ public class Robot
     {
         if (!IsActive) return;
         
-        LogSocial(senderName, message);
+        LogSocial(senderName, message, false);
         
         // 思考一会
         _isThinking = true;
@@ -727,9 +944,10 @@ public class Robot
         var history = SocialHistory.TakeLast(6).ToList();
         var response = await AiService.GetSocialResponseAsync(Name, Personality, message, history, senderName, sender.Personality);
         
+        IsAiSpeaking = true;
         ChatText = response;
         ChatTimer = 150;
-        LogSocial(Name, response);
+        LogSocial(Name, response, true);
 
         // 如果对方还在等，继续回聊 (限制对话长度以免陷入死循环)
         if (MeetingTimer > 100 && Rand.Next(100) < 70) 
@@ -739,7 +957,7 @@ public class Robot
         }
     }
 
-    private void LogSocial(string sender, string content)
+    private void LogSocial(string sender, string content, bool broadcast = true)
     {
         string log = $"[SOCIAL] {sender}: {content}";
         SocialHistory.Add((sender, content));
@@ -748,24 +966,26 @@ public class Robot
         if (LogSocialInteractions)
         {
             NotifyOutput(log);
-            // 同时也发送到世界大厅
-            Color chatColor = sender == Name ? PrimaryColor : Color.SkyBlue;
-            TerminalManagerForm.Instance.BroadcastToWorld(sender, content, chatColor);
+            
+            if (broadcast)
+            {
+                // 同时也发送到世界大厅
+                Color chatColor = sender == Name ? PrimaryColor : Color.SkyBlue;
+                TerminalManagerForm.Instance.BroadcastToWorld(sender, content, chatColor);
+            }
         }
     }
     
     private void SayHi(Robot other)
     {
         string[] greetings = { "Hi!", "Hello~", "Yo!", "Nice to meet ya", "hey!", "o/" };
-        ChatText = greetings[Rand.Next(greetings.Length)] + " " + other.Name;
-        ChatTimer = 120;
+        SetBark(greetings[Rand.Next(greetings.Length)] + " " + other.Name, 120);
         PauseTimer = 60;
         
         // 对方也可能回应
         if (Rand.Next(2) == 0)
         {
-            other.ChatText = greetings[Rand.Next(greetings.Length)] + " " + Name;
-            other.ChatTimer = 120;
+            other.SetBark(greetings[Rand.Next(greetings.Length)] + " " + Name, 120);
             other.PauseTimer = 60;
         }
         

@@ -3,7 +3,12 @@
     "allow": [
       "Bash(dotnet publish:*)",
       "Bash(dotnet nuget:*)",
-      "Bash(dotnet restore:*)"
+      "Bash(dotnet restore:*)",
+      "Bash(dotnet build:*)",
+      "Bash(taskkill:*)",
+      "Bash(start:*)",
+      "Bash(wmic process:*)",
+      "Bash(dotnet run:*)"
     ]
   }
 }

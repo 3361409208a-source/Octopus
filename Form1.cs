@@ -10,6 +10,8 @@ namespace CockroachPet;
 
 public partial class Form1 : Form
 {
+    public static Form1? Instance { get; private set; }
+
     // Windows API for global hotkeys
     [DllImport("user32.dll")]
     private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
@@ -31,6 +33,7 @@ public partial class Form1 : Form
     // 全局速度
     private int _globalSpeed = 100;
 
+
     // 机器人ID计数器
     private int _robotIdCounter = 1;
 
@@ -46,6 +49,7 @@ public partial class Form1 : Form
     public int DefaultRobotCount { get; set; } = 1;
     public bool ShowNamingDialog { get; set; } = false; // 默认不显示命名对话框
 
+
     // 设置窗口单例
     private SettingsForm? _settingsForm = null;
 
@@ -54,6 +58,7 @@ public partial class Form1 : Form
 
     public Form1()
     {
+        Instance = this;
         InitializeComponent();
         InitializeWindow();
         LoadSettingsAndStart();
@@ -114,6 +119,7 @@ public partial class Form1 : Form
         }
     }
 
+
     private Icon CreateRobotIcon()
     {
         // 创建像素八爪鱼图标
@@ -171,6 +177,7 @@ public partial class Form1 : Form
                             case "DefaultName": DefaultRobotName = parts[1]; break;
                             case "DefaultSize": DefaultRobotSize = int.Parse(parts[1]); break;
                             case "DefaultSpeed": _globalSpeed = int.Parse(parts[1]); break;
+
                         }
                     }
                 }
@@ -224,6 +231,8 @@ public partial class Form1 : Form
         // 注册全局热键
         RegisterGlobalHotkeys();
     }
+
+
 
     private void RegisterGlobalHotkeys()
     {
@@ -405,6 +414,8 @@ public partial class Form1 : Form
         // 快捷键提示
         menu.Items.Add("ℹ️ 快捷键", null, (s, e) => ShowShortcuts());
 
+
+
         // 关于
         menu.Items.Add("❓ 关于", null, (s, e) =>
         {
@@ -486,6 +497,8 @@ public partial class Form1 : Form
         dialog.Controls.Add(textBox);
         dialog.ShowDialog();
     }
+
+
 
     private void SetGlobalSpeed(int speed)
     {
@@ -670,6 +683,7 @@ public partial class Form1 : Form
         robot.Size = DefaultRobotSize + new Random().Next(-10, 10);
         robot.SpeedMultiplier = _globalSpeed / 100f;
 
+
         _robots.Add(robot);
         _robotIdCounter++;
 
@@ -694,8 +708,9 @@ public partial class Form1 : Form
         robot.InternalGuidelines = data.InternalGuidelines;
         robot.Size = data.Size;
         robot.SpeedMultiplier = data.SpeedMultiplier;
+
         robot.PrimaryColor = Color.FromArgb(data.PrimaryColorR, data.PrimaryColorG, data.PrimaryColorB);
-        
+
         // 优先加载专门的技能文件
         var savedSkills = SkillManager.LoadRobotSkills(data.Id, data.Name);
         if (savedSkills != null && savedSkills.Count > 0)
@@ -708,6 +723,8 @@ public partial class Form1 : Form
         }
 
         foreach (var insight in data.LearnedInsights) robot.LearnedInsights.Add(insight);
+        if (data.CustomPhrases != null) robot.CustomPhrases = data.CustomPhrases;
+
 
         robot.OnGrowthUpdated += (r) => PersistenceManager.SaveRobots(_robots);
 
@@ -739,6 +756,7 @@ public partial class Form1 : Form
             _settingsForm.RobotName = DefaultRobotName;
             _settingsForm.RobotSpeed = _globalSpeed;
             _settingsForm.ShowNamingDialog = ShowNamingDialog;
+
             
             _settingsForm.FormClosed += (sender, args) =>
             {
@@ -748,6 +766,8 @@ public partial class Form1 : Form
                     DefaultRobotName = _settingsForm.RobotName;
                     _globalSpeed = _settingsForm.RobotSpeed;
                     ShowNamingDialog = _settingsForm.ShowNamingDialog;
+
+
                     foreach (var r in _robots) r.SpeedMultiplier = _globalSpeed / 100f;
                 }
                 _settingsForm = null;

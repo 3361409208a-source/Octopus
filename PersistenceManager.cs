@@ -22,6 +22,8 @@ namespace CockroachPet
         public int PrimaryColorR { get; set; }
         public int PrimaryColorG { get; set; }
         public int PrimaryColorB { get; set; }
+        public List<string> CustomPhrases { get; set; } = new List<string>();
+
     }
 
     public static class PersistenceManager
@@ -49,7 +51,9 @@ namespace CockroachPet
                     SpeedMultiplier = r.SpeedMultiplier,
                     PrimaryColorR = r.PrimaryColor.R,
                     PrimaryColorG = r.PrimaryColor.G,
-                    PrimaryColorB = r.PrimaryColor.B
+                    PrimaryColorB = r.PrimaryColor.B,
+                    CustomPhrases = r.CustomPhrases,
+
                 }).ToList();
 
                 string json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true });

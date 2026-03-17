@@ -13,6 +13,10 @@ public static class PixelRobotRenderer
         float y = robot.Y;
         int size = robot.Size;
         bool facingRight = robot.FacingRight;
+        
+        // 记录世界坐标中心，用于绘制不受翻转影响的效果
+        float worldCenterX = x + size / 2;
+        float worldCenterY = y + size / 2;
 
         // 1. 绘制相对于机器人的 UI 元素（始终正向显示）
         DrawName(g, robot, x, y);
@@ -30,6 +34,14 @@ public static class PixelRobotRenderer
             g.ScaleTransform(-1, 1);
             x = 0;
             y = 0;
+        }
+
+        // 扔出去时的旋转
+        if (robot.RotationAngle != 0)
+        {
+            g.TranslateTransform(x + size / 2, y + size / 2);
+            g.RotateTransform(robot.RotationAngle);
+            g.TranslateTransform(-(x + size / 2), -(y + size / 2));
         }
 
         float centerX = x + size / 2;
@@ -68,50 +80,147 @@ public static class PixelRobotRenderer
             
             switch (robot.CurrentAttackType)
             {
-                case "SHOCK": // 电能震撼 - 锯齿状闪电
-                    using (var shockPen = new Pen(Color.FromArgb(200, Color.Cyan), 2))
+                case "SHOCK": // 电能震撼 - 单根强力闪电
+                    using (var shockPen = new Pen(Color.Cyan, 4))
+                    using (var whitePen = new Pen(Color.White, 1))
                     {
-                        float midX = (centerX + robot.LaserTargetX) / 2;
-                        float midY = (centerY + robot.LaserTargetY) / 2;
-                        float offsetX = (float)(r.NextDouble() - 0.5) * 40;
-                        float offsetY = (float)(r.NextDouble() - 0.5) * 40;
-                        
-                        g.DrawLine(shockPen, centerX, centerY, midX + offsetX, midY + offsetY);
-                        g.DrawLine(shockPen, midX + offsetX, midY + offsetY, robot.LaserTargetX, robot.LaserTargetY);
-                        
-                        // 目标溅射
-                        g.FillRectangle(Brushes.Cyan, robot.LaserTargetX - 8, robot.LaserTargetY - 8, 16, 16);
+                        // 减少线条数量，强调主干
+                        DrawElectricArc(g, r, worldCenterX, worldCenterY, robot.LaserTargetX, robot.LaserTargetY, shockPen, whitePen);
+                        g.DrawEllipse(new Pen(Color.White, 2), robot.LaserTargetX - 15, robot.LaserTargetY - 15, 30, 30);
                     }
                     break;
 
-                case "BURST": // 像素爆发 - 多重极速粒子
-                    using (var burstBrush = new SolidBrush(Color.FromArgb(220, Color.OrangeRed)))
+                case "INK_BLAST": // 墨汁弹 - 保持现状，属于块状攻击
+                    using (var inkBrush = new SolidBrush(Color.FromArgb(230, 10, 10, 10)))
                     {
-                        for (int i = 0; i < 3; i++)
+                        for (int i = 0; i < 6; i++)
                         {
-                            float pOffX = (float)(r.NextDouble() - 0.5) * 30;
-                            float pOffY = (float)(r.NextDouble() - 0.5) * 30;
-                            DrawPixelLine(g, burstBrush, centerX, centerY, robot.LaserTargetX + pOffX, robot.LaserTargetY + pOffY, 3);
+                            float t = (float)(r.NextDouble()); 
+                            float px = worldCenterX + (robot.LaserTargetX - worldCenterX) * t;
+                            float py = worldCenterY + (robot.LaserTargetY - worldCenterY) * t;
+                            float jitter = (1 - t) * 15;
+                            float pSize = 8 + (1-t) * 12;
+                            g.FillEllipse(inkBrush, px - pSize/2 + r.Next(-(int)jitter, (int)jitter), 
+                                                 py - pSize/2 + r.Next(-(int)jitter, (int)jitter), pSize, pSize);
+                        }
+                        for (int i = 0; i < 10; i++)
+                        {
+                            float ang = (float)(r.NextDouble() * Math.PI * 2);
+                            float d = (float)(r.NextDouble() * 30);
+                            g.FillEllipse(inkBrush, robot.LaserTargetX + (float)Math.Cos(ang)*d - 4, 
+                                                 robot.LaserTargetY + (float)Math.Sin(ang)*d - 4, 8, 8);
                         }
                     }
                     break;
 
-                default: // LASER - 强化脉冲激光
-                    using (var coreBrush = new SolidBrush(Color.White))
-                    using (var glowBrush = new SolidBrush(Color.FromArgb(150, attackColor)))
+                case "BURST": // 像素爆发 - 减少线条数，增加厚度
+                    using (var burstBrush = new SolidBrush(Color.FromArgb(220, Color.OrangeRed)))
                     {
-                        // 粗外层发光
-                        DrawPixelLine(g, glowBrush, centerX, centerY, robot.LaserTargetX, robot.LaserTargetY, 8);
-                        // 细核心白色
-                        DrawPixelLine(g, coreBrush, centerX, centerY, robot.LaserTargetX, robot.LaserTargetY, 2);
+                        for (int i = 0; i < 6; i++) // 减少到 6 根
+                        {
+                            float angleOff = (float)(r.NextDouble() - 0.5) * 0.5f;
+                            float baseAngle = (float)Math.Atan2(robot.LaserTargetY - worldCenterY, robot.LaserTargetX - worldCenterX);
+                            float pDist = (float)Math.Sqrt(Math.Pow(robot.LaserTargetX - worldCenterX, 2) + Math.Pow(robot.LaserTargetY - worldCenterY, 2));
+                            float tx = worldCenterX + (float)Math.Cos(baseAngle + angleOff) * pDist;
+                            float ty = worldCenterY + (float)Math.Sin(baseAngle + angleOff) * pDist;
+                            DrawPixelLine(g, burstBrush, worldCenterX, worldCenterY, tx, ty, 6); // 变粗
+                        }
+                    }
+                    break;
+
+                default: // LASER - 这一块改为单线条平滑激光，解决“线条太多”的问题
+                    using (var glowPen = new Pen(Color.FromArgb(150, robot.PrimaryColor), 12)) 
+                    using (var corePen = new Pen(Color.White, 4))
+                    {
+                        // 使用 GDI+ 自带的 DrawLine 以获得平滑感，减少重复线
+                        g.DrawLine(glowPen, worldCenterX, worldCenterY, robot.LaserTargetX, robot.LaserTargetY);
+                        g.DrawLine(corePen, worldCenterX, worldCenterY, robot.LaserTargetX, robot.LaserTargetY);
                         
-                        // 起点闪烁
-                        g.FillEllipse(Brushes.White, centerX - 10, centerY - 10, 20, 20);
-                        // 终点冲击波
-                        g.DrawEllipse(new Pen(attackColor, 3), robot.LaserTargetX - 15, robot.LaserTargetY - 15, 30, 30);
+                        g.FillEllipse(Brushes.White, worldCenterX - 10, worldCenterY - 10, 20, 20);
+                        g.FillRectangle(new SolidBrush(Color.FromArgb(200, robot.PrimaryColor)), robot.LaserTargetX - 12, robot.LaserTargetY - 12, 24, 24);
                     }
                     break;
             }
+        }
+
+        // 3. 物理互动视觉 (触手抓住)
+        if (robot.PhysicalAction != "NONE" && robot.PhysicalTarget != null)
+        {
+            DrawPhysicalInteraction(g, robot, worldCenterX, worldCenterY);
+        }
+    }
+
+    private static void DrawPhysicalInteraction(Graphics g, Robot robot, float cx, float cy)
+    {
+        var target = robot.PhysicalTarget;
+        if (target == null) return;
+
+        float tx = target.X + target.Size / 2;
+        float ty = target.Y + target.Size / 2;
+        
+        using (var armPen = new Pen(robot.PrimaryColor, 10))
+        using (var glowPen = new Pen(Color.FromArgb(120, robot.PrimaryColor), 18))
+        using (var suckerBrush = new SolidBrush(Color.FromArgb(220, Color.White)))
+        {
+            armPen.LineJoin = System.Drawing.Drawing2D.LineJoin.Round;
+            armPen.StartCap = System.Drawing.Drawing2D.LineCap.Round;
+            armPen.EndCap = System.Drawing.Drawing2D.LineCap.Round;
+            
+            var r = new Random();
+            float dist = (float)Math.Sqrt(Math.Pow(tx - cx, 2) + Math.Pow(ty - cy, 2));
+            float angle = (float)Math.Atan2(ty - cy, tx - cx);
+
+            for (int j = 0; j < 2; j++)
+            {
+                float sideAngle = angle + (j == 0 ? -0.5f : 0.5f);
+                float startX = cx + (float)Math.Cos(sideAngle) * 12;
+                float startY = cy + (float)Math.Sin(sideAngle) * 12;
+
+                PointF[] pts = new PointF[4];
+                pts[0] = new PointF(startX, startY);
+                
+                float wave = (float)Math.Sin(DateTime.Now.Millisecond * 0.01 + j) * 35;
+                float midX = cx + (tx - cx) * 0.5f + (float)Math.Cos(angle + Math.PI/2) * wave;
+                float midY = cy + (ty - cy) * 0.5f + (float)Math.Sin(angle + Math.PI/2) * wave;
+                
+                pts[1] = new PointF(midX, midY);
+                pts[2] = new PointF(tx + (float)r.Next(-15, 15), ty + (float)r.Next(-15, 15));
+                pts[3] = new PointF(tx, ty);
+
+                g.DrawCurve(glowPen, pts);
+                g.DrawCurve(armPen, pts);
+
+                // 吸盘
+                for (int i = 1; i < pts.Length - 1; i++)
+                {
+                    g.FillEllipse(suckerBrush, pts[i].X - 5, pts[i].Y - 5, 10, 10);
+                }
+                
+                g.FillEllipse(new SolidBrush(robot.PrimaryColor), tx-8, ty-8, 16, 16);
+            }
+        }
+    }
+
+    private static void DrawElectricArc(Graphics g, Random r, float x1, float y1, float x2, float y2, Pen mainPen, Pen corePen)
+    {
+        float curX = x1;
+        float curY = y1;
+        int segments = 8;
+        for (int i = 1; i <= segments; i++)
+        {
+            float t = (float)i / segments;
+            float jitter = r.Next(-25, 25) * (1-t/2);
+            float nextX = x1 + (x2 - x1) * t + jitter;
+            float nextY = y1 + (y2 - y1) * t + jitter;
+            if (i == segments) { nextX = x2; nextY = y2; }
+
+            g.DrawLine(mainPen, curX, curY, nextX, nextY);
+            g.DrawLine(corePen, curX, curY, nextX, nextY);
+            
+            if (r.Next(100) < 40) g.FillRectangle(Brushes.White, nextX - 3, nextY - 3, 6, 6);
+
+            curX = nextX;
+            curY = nextY;
         }
     }
 

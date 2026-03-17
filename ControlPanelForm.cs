@@ -334,7 +334,7 @@ public class ControlPanelForm : Form
         using var dialog = new Form
         {
             Text = $"编辑机器人: {robot.Name} (ID: {robot.Id})",
-            Size = new Size(400, 500),
+            Size = new Size(440, 640),
             StartPosition = FormStartPosition.CenterParent,
             FormBorderStyle = FormBorderStyle.FixedDialog,
             BackColor = Color.FromArgb(40, 40, 40),
@@ -357,7 +357,15 @@ public class ControlPanelForm : Form
         var sizeInput = new NumericUpDown { Minimum = 32, Maximum = 256, Value = robot.Size };
         var speedInput = new NumericUpDown { Minimum = 0, Maximum = 500, Value = (decimal)(robot.SpeedMultiplier * 100) };
         var levelInput = new NumericUpDown { Minimum = 1, Maximum = 100, Value = (decimal)robot.ConsciousnessLevel, DecimalPlaces = 1 };
-        var guidelineInput = new TextBox { Text = robot.InternalGuidelines, Multiline = true, Height = 60 };
+        var guidelineInput = new TextBox { Text = robot.InternalGuidelines, Multiline = true, Height = 40 };
+
+
+        var phraseInput = new TextBox { 
+            Text = string.Join(Environment.NewLine, robot.CustomPhrases), 
+            Multiline = true, 
+            Height = 80,
+            ScrollBars = ScrollBars.Vertical
+        };
 
         AddRow("名称:", nameInput);
         AddRow("个性:", personalityInput);
@@ -366,7 +374,28 @@ public class ControlPanelForm : Form
         AddRow("意识等级:", levelInput);
         AddRow("行为准则:", guidelineInput);
 
-        var btnOk = new Button { Text = "保存修改", Dock = DockStyle.Bottom, Height = 40, BackColor = Color.Lime, ForeColor = Color.Black, FlatStyle = FlatStyle.Flat };
+        // 自定义台词行 (带导入按钮)
+        var phraseLabelContainer = new FlowLayoutPanel { 
+            FlowDirection = FlowDirection.TopDown, 
+            Dock = DockStyle.Fill, 
+            Margin = new Padding(0),
+            AutoSize = true
+        };
+        phraseLabelContainer.Controls.Add(new Label { 
+            Text = "自定义台词\n(每行一条):", 
+            AutoSize = true, 
+            ForeColor = Color.White,
+            TextAlign = ContentAlignment.MiddleRight,
+            Anchor = AnchorStyles.Right
+        });
+
+
+        
+        layout.Controls.Add(phraseLabelContainer);
+        phraseInput.Dock = DockStyle.Fill;
+        layout.Controls.Add(phraseInput);
+
+        var btnOk = new Button { Text = "保存修改", Dock = DockStyle.Bottom, Height = 40, BackColor = Color.Lime, ForeColor = Color.Black, FlatStyle = FlatStyle.Flat, Font = new Font("Microsoft YaHei", 10, FontStyle.Bold) };
         btnOk.Click += (s, e) => {
             robot.Name = nameInput.Text;
             robot.Personality = personalityInput.Text;
@@ -374,6 +403,13 @@ public class ControlPanelForm : Form
             robot.SpeedMultiplier = (float)speedInput.Value / 100f;
             robot.ConsciousnessLevel = (double)levelInput.Value;
             robot.InternalGuidelines = guidelineInput.Text;
+
+
+            // 解析台词
+            robot.CustomPhrases = phraseInput.Text
+                .Split(new[] { Environment.NewLine, "\n" }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(p => p.Trim())
+                .ToList();
             
             robot.SaveSkills(); // 触发保存
             PersistenceManager.SaveRobots(_mainForm.GetRobots());
