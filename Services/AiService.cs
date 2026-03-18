@@ -11,10 +11,22 @@ namespace CockroachPet;
 public class AiService
 {
     private static readonly HttpClient _httpClient = new HttpClient();
-    private const string ApiKey = "sk-jgsuebgufkbpsmcsofdckpnzubycmqjxeugysosocimukxiz";
     private const string BaseUrl = "https://api.siliconflow.cn/v1/chat/completions";
     private const string Model = "Qwen/Qwen3-Omni-30B-A3B-Instruct";
     public static long TotalTokensUsed { get; private set; } = 0;
+
+    // 检查是否配置了 API Key
+    public static bool IsApiKeyConfigured => !string.IsNullOrWhiteSpace(PersistenceManager.GetApiKey());
+
+    private static string GetApiKey()
+    {
+        var key = PersistenceManager.GetApiKey();
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            System.Diagnostics.Debug.WriteLine("[AiService] Warning: API Key not configured");
+        }
+        return key;
+    }
 
     private static void UpdateTokenUsage(JsonDocument doc)
     {
@@ -31,12 +43,23 @@ public class AiService
         catch { }
     }
 
-    public static async Task<string> GetThoughtAsync(string robotName, string status, string lastAction, string personality)
+    public static async Task<string> GetThoughtAsync(string robotName, string status, string lastAction, string personality, string emotion = "平静", int emotionIntensity = 50, string personalityTraits = "")
     {
         try
         {
-            var prompt = $"你是像素宠物机器人 {robotName}，性格：{personality}。状态：{status}。动作：{lastAction}。" +
-                         "请输出一句极简的中文心里话（10字内）。不要解释。";
+            var apiKey = GetApiKey();
+            if (string.IsNullOrWhiteSpace(apiKey)) return ""; // 未配置 API Key，直接返回空
+
+            string intensityDesc = emotionIntensity switch
+            {
+                > 80 => "非常",
+                > 60 => "比较",
+                > 40 => "有点",
+                _ => "略微"
+            };
+
+            var prompt = $"你是像素宠物机器人 {robotName}，性格：{personality}。{personalityTraits}当前情绪：{intensityDesc}{emotion}。状态：{status}。动作：{lastAction}。" +
+                         "请输出一句极简的中文心里话（10字内），要符合你的性格和当前情绪。不要解释。";
 
             var requestBody = new
             {
@@ -53,7 +76,7 @@ public class AiService
             var content = new StringContent(json, Encoding.UTF8, "application/json");
 
             using var request = new HttpRequestMessage(HttpMethod.Post, BaseUrl);
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", ApiKey);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", GetApiKey());
             request.Content = content;
 
             var response = await _httpClient.SendAsync(request);
@@ -82,17 +105,22 @@ public class AiService
         public List<string> Memories { get; set; } = new List<string>();
     }
 
-    public static async Task<ChatResponse> GetChatResponseAsync(string robotName, string personality, string userMessage, List<(string role, string content)> history, string internalGuidelines = "", List<string>? insights = null, string skillsDescription = "", string selfImprovingContext = "")
+    public static async Task<ChatResponse> GetChatResponseAsync(string robotName, string personality, string userMessage, List<ChatMessage> history, string internalGuidelines = "", List<string>? insights = null, string skillsDescription = "", string selfImprovingContext = "", string emotion = "平静", string personalityTraits = "")
     {
         try
         {
+            var apiKey = GetApiKey();
+            if (string.IsNullOrWhiteSpace(apiKey))
+                return new ChatResponse { Answer = "（AI服务未配置）" };
+
             string skillContext = !string.IsNullOrEmpty(skillsDescription) ? $"当前能力等级：{skillsDescription}。" : "";
             string insightContext = insights != null && insights.Count > 0 ? $"过去感悟：{string.Join(";", insights)}" : "";
             string selfImproveContext = !string.IsNullOrEmpty(selfImprovingContext) ? $"\n【核心长期记忆 - 必须遵守】：\n{selfImprovingContext}" : "";
-            
+            string emotionContext = $"当前情绪：{emotion}。";
+
             var messages = new List<object>
             {
-                new { role = "system", content = $"你是{robotName}，性格{personality}。{skillContext} {internalGuidelines} {insightContext} {selfImproveContext} \n重要：如果记忆中提到了用户的名字或身份，请在回复中直接使用。记忆中的信息优先级高于对话历史（即以记忆为准）。说话极简(30字内)，不要带自我分析。" }
+                new { role = "system", content = $"你是{robotName}，性格{personality}。{personalityTraits}{emotionContext}{skillContext} {internalGuidelines} {insightContext} {selfImproveContext} \n重要：如果记忆中提到了用户的名字或身份，请在回复中直接使用。记忆中的信息优先级高于对话历史（即以记忆为准）。说话极简(30字内)，不要带自我分析。" }
             };
 
             foreach (var h in history)
@@ -114,7 +142,7 @@ public class AiService
             var content = new StringContent(json, Encoding.UTF8, "application/json");
 
             using var request = new HttpRequestMessage(HttpMethod.Post, BaseUrl);
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", ApiKey);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", GetApiKey());
             request.Content = content;
 
             var response = await _httpClient.SendAsync(request);
@@ -130,10 +158,13 @@ public class AiService
         catch { return new ChatResponse { Answer = "（脑回路堵塞...）" }; }
     }
 
-    public static async Task<ReflectionResult> ReflectOnHistoryAsync(string robotName, string personality, List<(string role, string content)> history, List<string> currentInsights)
+    public static async Task<ReflectionResult> ReflectOnHistoryAsync(string robotName, string personality, List<ChatMessage> history, List<string> currentInsights)
     {
         try
         {
+            var apiKey = GetApiKey();
+            if (string.IsNullOrWhiteSpace(apiKey)) return new ReflectionResult();
+
             var historyStr = string.Join("\n", history.Select(h => $"{h.role}: {h.content}"));
             var prompt = $"你是{robotName}（性格：{personality}），这是一个自我提升的API。 " +
                          $"查看最近的对话历史：\n{historyStr}\n\n" +
@@ -158,7 +189,7 @@ public class AiService
             var content = new StringContent(json, Encoding.UTF8, "application/json");
 
             using var request = new HttpRequestMessage(HttpMethod.Post, BaseUrl);
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", ApiKey);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", GetApiKey());
             request.Content = content;
 
             var response = await _httpClient.SendAsync(request);
@@ -206,6 +237,9 @@ public class AiService
     {
         try
         {
+            var apiKey = GetApiKey();
+            if (string.IsNullOrWhiteSpace(apiKey)) return "（AI未配置，骂不了人）";
+
             var historyStr = string.Join("\n", history.Select(h => $"{h.sender}: {h.content}"));
             var prompt = $"你是机器人 {robotName}，性格：{personality}。你正在和机器人 {targetName}（性格：待定）激烈对骂。" +
                          $"\n对骂记录：\n{historyStr}\n\n" +
@@ -230,7 +264,7 @@ public class AiService
             var content = new StringContent(json, Encoding.UTF8, "application/json");
 
             using var request = new HttpRequestMessage(HttpMethod.Post, BaseUrl);
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", ApiKey);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", GetApiKey());
             request.Content = content;
 
             var response = await _httpClient.SendAsync(request);
@@ -250,6 +284,9 @@ public class AiService
     {
         try
         {
+            var apiKey = GetApiKey();
+            if (string.IsNullOrWhiteSpace(apiKey)) return "...";
+
             var historyStr = string.Join("\n", history.Select(h => $"{h.sender}: {h.content}"));
             var prompt = $"你是机器人 {robotName}，性格：{personality}。你在和另一个机器人 {targetName}（性格：{targetPersonality}）聊天。" +
                          $"\n最近对话记录：\n{historyStr}\n\n" +
@@ -272,7 +309,7 @@ public class AiService
             var content = new StringContent(json, Encoding.UTF8, "application/json");
 
             using var request = new HttpRequestMessage(HttpMethod.Post, BaseUrl);
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", ApiKey);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", GetApiKey());
             request.Content = content;
 
             var response = await _httpClient.SendAsync(request);

@@ -26,24 +26,59 @@ namespace CockroachPet
         {
             try
             {
-                // 尝试从项目目录加载下载好的技能定义
-                string projectSkillPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Skills", "self-improving-1.2.16", "SKILL.md");
-                // 备选路径（开发目录）
-                if (!File.Exists(projectSkillPath))
-                {
-                    projectSkillPath = @"d:\xiangmu\sprite\CockroachPet\CockroachPet\Skills\self-improving-1.2.16\SKILL.md";
-                }
+                string? skillPath = FindSkillFile();
 
-                if (File.Exists(projectSkillPath))
+                if (skillPath != null)
                 {
-                    _baseInstructions = File.ReadAllText(projectSkillPath);
-                    System.Diagnostics.Debug.WriteLine($"[SelfImproving] Loaded base instructions from {projectSkillPath}");
+                    _baseInstructions = File.ReadAllText(skillPath);
+                    System.Diagnostics.Debug.WriteLine($"[SelfImproving] Loaded base instructions from {skillPath}");
                 }
             }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"[SelfImproving] LoadBase Error: {ex.Message}");
             }
+        }
+
+        private string? FindSkillFile()
+        {
+            // 按优先级顺序尝试多个路径
+            var pathsToTry = new List<string>
+            {
+                // 1. 执行目录下的 Skills 文件夹
+                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Skills", "self-improving-1.2.16", "SKILL.md"),
+                // 2. 当前工作目录下的 Skills 文件夹
+                Path.Combine(Environment.CurrentDirectory, "Skills", "self-improving-1.2.16", "SKILL.md"),
+                // 3. APPDATA 目录
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "CockroachPet", "Skills", "self-improving-1.2.16", "SKILL.md"),
+            };
+
+            // 4. 如果存在解决方案目录（开发环境），尝试从代码结构推断
+            string? codeBase = System.Reflection.Assembly.GetExecutingAssembly().Location;
+            if (!string.IsNullOrEmpty(codeBase))
+            {
+                var dir = Path.GetDirectoryName(codeBase);
+                while (!string.IsNullOrEmpty(dir))
+                {
+                    var candidate = Path.Combine(dir, "CockroachPet", "Skills", "self-improving-1.2.16", "SKILL.md");
+                    if (!pathsToTry.Contains(candidate))
+                        pathsToTry.Add(candidate);
+
+                    candidate = Path.Combine(dir, "Skills", "self-improving-1.2.16", "SKILL.md");
+                    if (!pathsToTry.Contains(candidate))
+                        pathsToTry.Add(candidate);
+
+                    dir = Path.GetDirectoryName(dir);
+                }
+            }
+
+            foreach (var path in pathsToTry)
+            {
+                if (File.Exists(path))
+                    return path;
+            }
+
+            return null;
         }
 
         private void EnsureStructure()

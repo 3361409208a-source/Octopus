@@ -17,6 +17,8 @@ public class SettingsForm : Form
     public int AiThoughtFrequency { get; set; } = 60; // 默认 60 秒
     public int FightFrequency { get; set; } = 15; // 默认 15% 几率打架
     public bool IsWeaponMaster { get; set; } = false; // 武器大师模式
+    public string ApiKey { get; set; } = ""; // API Key
+    public RobotPersonalityType DefaultPersonality { get; set; } = RobotPersonalityType.Friendly; // 默认个性
 
 
     private NumericUpDown _countInput;
@@ -29,6 +31,9 @@ public class SettingsForm : Form
     private NumericUpDown _aiFrequencyInput;
     private NumericUpDown _fightFreqInput;
     private CheckBox _isWeaponMasterCheck;
+    private TextBox _apiKeyInput;
+    private Label _apiKeyStatusLabel;
+    private ComboBox _personalityCombo;
 
 
     public SettingsForm()
@@ -87,7 +92,7 @@ public class SettingsForm : Form
         {
             Dock = DockStyle.Top,
             Padding = new Padding(0),
-            RowCount = 12, // 增加行数以容纳新项
+            RowCount = 15, // 增加行数以容纳个性选择
             ColumnCount = 2,
             BackColor = Color.FromArgb(40, 40, 40),
             AutoSize = true,
@@ -218,20 +223,74 @@ public class SettingsForm : Form
         };
         tableLayoutPanel.Controls.Add(_isWeaponMasterCheck, 1, 9);
 
+        // 默认个性
+        tableLayoutPanel.Controls.Add(CreateLabel("默认个性:"), 0, 10);
+        _personalityCombo = new ComboBox
+        {
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            Width = 150,
+            BackColor = Color.FromArgb(60, 60, 60),
+            ForeColor = Color.White
+        };
+        // 添加个性选项
+        var personalities = new[] {
+            (RobotPersonalityType.Friendly, "🤝 友好 - 喜欢交朋友"),
+            (RobotPersonalityType.Shy, "🙈 害羞 - 避开其他机器人"),
+            (RobotPersonalityType.Rebel, "😈 叛逆 - 喜欢冲撞挑衅"),
+            (RobotPersonalityType.Humorous, "😄 幽默 - 喜欢开玩笑"),
+            (RobotPersonalityType.Serious, "🤔 严肃 - 行为稳重"),
+            (RobotPersonalityType.Curious, "👀 好奇 - 喜欢探索"),
+            (RobotPersonalityType.Lazy, "😴 懒惰 - 经常休息"),
+            (RobotPersonalityType.Energetic, "⚡ 精力 - 快速移动")
+        };
+        foreach (var (type, desc) in personalities)
+        {
+            _personalityCombo.Items.Add(desc);
+        }
+        _personalityCombo.SelectedIndex = 0;
+        tableLayoutPanel.Controls.Add(_personalityCombo, 1, 10);
 
-
-
+        // API Key 设置
+        tableLayoutPanel.Controls.Add(CreateLabel("API Key:"), 0, 11);
+        var apiKeyPanel = new Panel
+        {
+            Dock = DockStyle.Fill,
+            Height = 50,
+            BackColor = Color.FromArgb(40, 40, 40)
+        };
+        _apiKeyInput = new TextBox
+        {
+            Width = 200,
+            Height = 25,
+            Location = new Point(0, 0),
+            BackColor = Color.FromArgb(60, 60, 60),
+            ForeColor = Color.White,
+            BorderStyle = BorderStyle.FixedSingle,
+            PasswordChar = '*',
+            PlaceholderText = "输入 SiliconFlow API Key"
+        };
+        _apiKeyStatusLabel = new Label
+        {
+            Text = "⚠️ 未配置",
+            ForeColor = Color.Red,
+            Font = new Font("Microsoft YaHei", 8),
+            Location = new Point(0, 28),
+            AutoSize = true
+        };
+        apiKeyPanel.Controls.Add(_apiKeyInput);
+        apiKeyPanel.Controls.Add(_apiKeyStatusLabel);
+        tableLayoutPanel.Controls.Add(apiKeyPanel, 1, 10);
 
         // 说明标签
         var infoLabel = new Label
         {
-            Text = "💡 提示: 左键点击机器人打开CMD终端\n    Ctrl+Shift+M 打开菜单 | Ctrl+Shift+P 暂停/继续",
+            Text = "💡 提示: 左键点击机器人打开CMD终端\n    Ctrl+Shift+M 打开菜单 | Ctrl+Shift+P 暂停/继续 | Ctrl+Shift+H 摸鱼模式",
             ForeColor = Color.Gray,
             Font = new Font("Microsoft YaHei", 9),
             AutoSize = true,
             Margin = new Padding(0, 10, 0, 0)
         };
-        tableLayoutPanel.Controls.Add(infoLabel, 0, 10);
+        tableLayoutPanel.Controls.Add(infoLabel, 0, 12);
         tableLayoutPanel.SetColumnSpan(infoLabel, 2);
 
         // 调整表格布局高度
@@ -245,6 +304,8 @@ public class SettingsForm : Form
         tableLayoutPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 40)); // AI 思考频率
         tableLayoutPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 40)); // 打架几率
         tableLayoutPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 40)); // 武器大师
+        tableLayoutPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 40)); // 默认个性
+        tableLayoutPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 60)); // API Key
         tableLayoutPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // 说明
 
         contentPanel.Controls.Add(tableLayoutPanel);
@@ -347,13 +408,37 @@ public class SettingsForm : Form
                             case "AiFreq": _aiFrequencyInput.Value = int.Parse(parts[1]); break;
                             case "FightFreq": _fightFreqInput.Value = int.Parse(parts[1]); break;
                             case "WeaponMaster": _isWeaponMasterCheck.Checked = bool.Parse(parts[1]); break;
-
+                            case "Personality":
+                                if (int.TryParse(parts[1], out int personalityIndex))
+                                {
+                                    _personalityCombo.SelectedIndex = Math.Clamp(personalityIndex, 0, _personalityCombo.Items.Count - 1);
+                                }
+                                break;
                         }
                     }
                 }
             }
+
+            // 从新的 settings.json 加载 API Key
+            var appSettings = PersistenceManager.LoadAppSettings();
+            _apiKeyInput.Text = appSettings.ApiKey ?? "";
+            UpdateApiKeyStatus();
         }
         catch { }
+    }
+
+    private void UpdateApiKeyStatus()
+    {
+        if (string.IsNullOrWhiteSpace(_apiKeyInput.Text))
+        {
+            _apiKeyStatusLabel.Text = "⚠️ 未配置（AI功能不可用）";
+            _apiKeyStatusLabel.ForeColor = Color.Red;
+        }
+        else
+        {
+            _apiKeyStatusLabel.Text = "✓ 已配置";
+            _apiKeyStatusLabel.ForeColor = Color.Lime;
+        }
     }
 
     public void SaveSettings()
@@ -368,6 +453,8 @@ public class SettingsForm : Form
         AiThoughtFrequency = (int)_aiFrequencyInput.Value;
         FightFrequency = (int)_fightFreqInput.Value;
         IsWeaponMaster = _isWeaponMasterCheck.Checked;
+        DefaultPersonality = (RobotPersonalityType)_personalityCombo.SelectedIndex;
+        ApiKey = _apiKeyInput.Text.Trim();
 
 
         // 保存到文件
@@ -387,9 +474,13 @@ public class SettingsForm : Form
                 $"AiFreq={AiThoughtFrequency}",
                 $"FightFreq={FightFrequency}",
                 $"WeaponMaster={IsWeaponMaster}",
+                $"Personality={(int)DefaultPersonality}",
 
             };
             System.IO.File.WriteAllLines(settingsPath, lines);
+
+            // 保存 API Key 到新的 settings.json
+            PersistenceManager.SetApiKey(ApiKey);
         }
         catch { }
     }

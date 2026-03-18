@@ -22,10 +22,18 @@ public partial class Form1 : Form
     private const int HOTKEY_ID_MENU = 1;
     private const int HOTKEY_ID_TOGGLE = 2;
     private const int HOTKEY_ID_PAUSE = 3;
+    private const int HOTKEY_ID_BOSS = 4; // 摸鱼模式热键ID
+    private const int HOTKEY_ID_BOSS_CYCLE = 5; // 切换摸鱼主题
+    private const int HOTKEY_ID_SPAWN_MONSTER = 6; // 投放怪物热键ID
+    private const int HOTKEY_ID_OPACITY_UP = 7; // 增加透明度
+    private const int HOTKEY_ID_OPACITY_DOWN = 8; // 减少透明度
     private const uint MOD_CTRL_SHIFT = 0x0002 | 0x0004; // MOD_CONTROL | MOD_SHIFT
 
     // 机器人列表
     private List<Robot> _robots = new List<Robot>();
+
+    // 怪物列表
+    private List<Monster> _monsters = new List<Monster>();
 
     // 定时器
     private System.Windows.Forms.Timer? _moveTimer;
@@ -43,6 +51,12 @@ public partial class Form1 : Form
     // 点击穿透
     private bool _clickThrough = true;
 
+    // 摸鱼模式
+    private bool _bossMode = false;
+    private bool _bossModeHideRobots = true; // 摸鱼模式是否真正隐藏机器人（而非伪装界面）
+    private BossModeTheme _bossModeTheme = BossModeTheme.Excel;
+    private readonly string[] _themeNames = { "无（仅隐藏）", "Excel表格", "VS Code编辑器", "CMD终端", "Word文档" };
+
     // 默认设置
     public int DefaultRobotSize { get; set; } = 64;
     public string DefaultRobotName { get; set; } = "小八";
@@ -52,6 +66,7 @@ public partial class Form1 : Form
     public int AiThoughtFrequency { get; set; } = 60;
     public int FightFrequency { get; set; } = 15;
     public bool IsWeaponMaster { get; set; } = false;
+    public RobotPersonalityType DefaultPersonality { get; set; } = RobotPersonalityType.Friendly;
 
     private List<Projectile> _projectiles = new List<Projectile>();
 
@@ -77,6 +92,9 @@ public partial class Form1 : Form
 
     private void LoadSettingsAndStart()
     {
+        // 初始化音效系统
+        AudioManager.Initialize();
+
         // 尝试从文件加载设置
         LoadSettingsFromFile();
 
@@ -205,6 +223,12 @@ public partial class Form1 : Form
                             case "AiFreq": AiThoughtFrequency = int.Parse(parts[1]); break;
                             case "FightFreq": FightFrequency = int.Parse(parts[1]); break;
                             case "WeaponMaster": IsWeaponMaster = bool.Parse(parts[1]); break;
+                            case "Personality":
+                                if (int.TryParse(parts[1], out int personalityIndex))
+                                {
+                                    DefaultPersonality = (RobotPersonalityType)Math.Clamp(personalityIndex, 0, 7);
+                                }
+                                break;
 
                         }
                     }
@@ -271,6 +295,16 @@ public partial class Form1 : Form
         RegisterHotKey(this.Handle, HOTKEY_ID_TOGGLE, MOD_CTRL_SHIFT, 0x54); // T
         // Ctrl+Shift+M = 打开菜单
         RegisterHotKey(this.Handle, HOTKEY_ID_MENU, MOD_CTRL_SHIFT, 0x4D); // M
+        // Ctrl+Shift+H = 摸鱼模式 (Hide)
+        RegisterHotKey(this.Handle, HOTKEY_ID_BOSS, MOD_CTRL_SHIFT, 0x48); // H
+        // Ctrl+Shift+B = 切换摸鱼主题 (Boss theme)
+        RegisterHotKey(this.Handle, HOTKEY_ID_BOSS_CYCLE, MOD_CTRL_SHIFT, 0x42); // B
+        // Ctrl+Shift+X = 投放怪物 (X for eXterminate)
+        RegisterHotKey(this.Handle, HOTKEY_ID_SPAWN_MONSTER, MOD_CTRL_SHIFT, 0x58); // X
+        // Ctrl+Shift+Up = 增加透明度
+        RegisterHotKey(this.Handle, HOTKEY_ID_OPACITY_UP, MOD_CTRL_SHIFT, 0x26); // Up arrow
+        // Ctrl+Shift+Down = 减少透明度
+        RegisterHotKey(this.Handle, HOTKEY_ID_OPACITY_DOWN, MOD_CTRL_SHIFT, 0x28); // Down arrow
     }
 
     protected override void WndProc(ref Message m)
@@ -290,6 +324,21 @@ public partial class Form1 : Form
                     break;
                 case HOTKEY_ID_PAUSE:
                     TogglePauseAll();
+                    break;
+                case HOTKEY_ID_BOSS:
+                    ToggleBossMode();
+                    break;
+                case HOTKEY_ID_BOSS_CYCLE:
+                    CycleBossModeTheme();
+                    break;
+                case HOTKEY_ID_SPAWN_MONSTER:
+                    SpawnMonster();
+                    break;
+                case HOTKEY_ID_OPACITY_UP:
+                    ChangeOpacity(20); // 增加透明度（更不透明）
+                    break;
+                case HOTKEY_ID_OPACITY_DOWN:
+                    ChangeOpacity(-20); // 减少透明度（更透明）
                     break;
             }
         }
@@ -314,6 +363,46 @@ public partial class Form1 : Form
         ShowNotification(anyMoving ? "全部暂停" : "全部继续");
     }
 
+    private void ToggleBossMode()
+    {
+        _bossMode = !_bossMode;
+
+        if (_bossModeHideRobots)
+        {
+            // 真正隐藏机器人
+            foreach (var r in _robots)
+            {
+                r.IsVisible = !_bossMode;
+            }
+            // 隐藏怪物
+            foreach (var m in _monsters)
+            {
+                m.IsActive = !_bossMode;
+            }
+            ShowNotification(_bossMode ? "摸鱼模式已开启: 所有宠物已隐藏 👻" : "欢迎回来 👋");
+        }
+        else
+        {
+            // 传统摸鱼模式（伪装界面）
+            ShowNotification(_bossMode ? $"摸鱼模式已开启: {_themeNames[(int)_bossModeTheme]} 🐟" : "欢迎回来 👋");
+        }
+
+        Invalidate();
+    }
+
+    private void CycleBossModeTheme()
+    {
+        if (!_bossMode)
+        {
+            ToggleBossMode();
+            return;
+        }
+
+        _bossModeTheme = (BossModeTheme)(((int)_bossModeTheme + 1) % 5);
+        ShowNotification($"切换伪装: {_themeNames[(int)_bossModeTheme]} 🎭");
+        Invalidate();
+    }
+
     private void SpawnRobotsWithNaming(int count)
     {
         for (int i = 0; i < count; i++)
@@ -324,6 +413,58 @@ public partial class Form1 : Form
                 robot.IsVisible = false;
             }
         }
+    }
+
+    /// <summary>
+    /// 投放怪物 - 所有机器人会集火攻击
+    /// </summary>
+    private void SpawnMonster()
+    {
+        // 清理已死亡的怪物
+        _monsters.RemoveAll(m => m.IsDead);
+
+        // 在屏幕中心附近随机位置生成怪物
+        var screen = Screen.PrimaryScreen;
+        if (screen == null) return;
+
+        float x = screen.Bounds.Width / 2f + new Random().Next(-200, 200);
+        float y = screen.Bounds.Height / 2f + new Random().Next(-150, 150);
+
+        var monster = new Monster(x, y);
+        _monsters.Add(monster);
+
+        ShowNotification($"🐲 怪物已投放！HP: {monster.MaxHP}");
+
+        // 让所有机器人进入战斗状态，集火攻击怪物
+        foreach (var robot in _robots)
+        {
+            if (robot.IsActive && !robot.IsDead)
+            {
+                robot.SetMonsterTarget(monster);
+            }
+        }
+
+        Invalidate();
+    }
+
+    /// <summary>
+    /// 调整所有机器人的透明度
+    /// </summary>
+    private void ChangeOpacity(int delta)
+    {
+        if (_robots.Count == 0) return;
+
+        int newOpacity = _robots[0].Opacity + delta;
+        newOpacity = Math.Clamp(newOpacity, 0, 255);
+
+        foreach (var robot in _robots)
+        {
+            robot.Opacity = newOpacity;
+        }
+
+        string opacityPercent = (newOpacity * 100 / 255).ToString();
+        ShowNotification($"透明度: {opacityPercent}% {(newOpacity == 0 ? "(完全透明)" : newOpacity == 255 ? "(完全不透明)" : "")}");
+        Invalidate();
     }
 
     private void ShowNotification(string message)
@@ -364,7 +505,7 @@ public partial class Form1 : Form
 
         // 启动提示
         _notifyIcon.BalloonTipTitle = "Pixel Robot Pet";
-        _notifyIcon.BalloonTipText = "系统已启动！\nCtrl+Shift+M 打开菜单\nCtrl+Shift+P 暂停/继续";
+        _notifyIcon.BalloonTipText = "系统已启动！\nCtrl+Shift+M 打开菜单\nCtrl+Shift+P 暂停/继续\nCtrl+Shift+H 摸鱼模式\nCtrl+Shift+B 切换伪装\nCtrl+Shift+X 投放怪物";
         _notifyIcon.ShowBalloonTip(3000);
     }
 
@@ -407,6 +548,30 @@ public partial class Form1 : Form
 
         // 控制面板
         menu.Items.Add("🎛️ 打开控制面板", null, (s, e) => ShowControlPanel());
+
+        menu.Items.Add(new ToolStripSeparator());
+
+        // 摸鱼模式菜单
+        var bossMenu = new ToolStripMenuItem("🐟 摸鱼模式");
+        var bossToggleItem = new ToolStripMenuItem(_bossMode ? "✅ 已开启" : "⭕ 已关闭");
+        bossToggleItem.Click += (s, e) => ToggleBossMode();
+        bossMenu.DropDownItems.Add(bossToggleItem);
+        bossMenu.DropDownItems.Add(new ToolStripSeparator());
+
+        var themes = new[] { ("🚫 无（仅隐藏）", BossModeTheme.None), ("📊 Excel表格", BossModeTheme.Excel), ("💻 VS Code", BossModeTheme.CodeEditor), ("⌨️ CMD终端", BossModeTheme.Terminal), ("📝 Word文档", BossModeTheme.Word) };
+        foreach (var (name, theme) in themes)
+        {
+            var themeItem = new ToolStripMenuItem(_bossModeTheme == theme ? $"✓ {name}" : name);
+            themeItem.Click += (s, e) =>
+            {
+                _bossModeTheme = theme;
+                if (!_bossMode) ToggleBossMode();
+                else Invalidate();
+                ShowNotification($"切换伪装: {_themeNames[(int)theme]}");
+            };
+            bossMenu.DropDownItems.Add(themeItem);
+        }
+        menu.Items.Add(bossMenu);
 
         menu.Items.Add(new ToolStripSeparator());
 
@@ -486,6 +651,9 @@ public partial class Form1 : Form
   Ctrl+Shift+P       - 暂停/继续所有机器人
   Ctrl+Shift+T       - 切换点击穿透模式
   Ctrl+Shift+M       - 打开菜单
+  Ctrl+Shift+H       - 开启/关闭摸鱼模式（真正隐藏机器人）
+  Ctrl+Shift+B       - 切换摸鱼伪装主题
+  Ctrl+Shift+X       - 投放怪物（所有机器人集火攻击）
 
 【程序内快捷键（关闭点击穿透后可用）】
   ESC                - 打开菜单
@@ -507,6 +675,9 @@ public partial class Form1 : Form
   robot-resume       - 恢复移动
   robot-stop         - 停止移动
   robot-help         - 显示帮助
+
+摸鱼模式伪装主题:
+  Excel表格 | VS Code | CMD终端 | Word文档
 
 托盘图标操作:
   左键/右键点击      - 显示菜单
@@ -588,6 +759,7 @@ public partial class Form1 : Form
                 if (distSq < radius * radius)
                 {
                     target.HandleProjectileHit(p);
+                    AudioManager.PlayProjectileHitSound(p.Type);
                     p.IsActive = false;
                     break;
                 }
@@ -610,6 +782,9 @@ public partial class Form1 : Form
 
         // 4. 胜者吞噬与回合重置逻辑
         HandleGameRules(screenWidth, screenHeight);
+
+        // 5. 更新怪物
+        UpdateMonsters(screenWidth, screenHeight);
 
         this.Invalidate();
     }
@@ -695,12 +870,97 @@ public partial class Form1 : Form
         }
     }
 
+    /// <summary>
+    /// 更新所有怪物状态和碰撞检测
+    /// </summary>
+    private void UpdateMonsters(int screenWidth, int screenHeight)
+    {
+        // 更新怪物
+        foreach (var monster in _monsters)
+        {
+            if (monster.IsActive && !monster.IsDead)
+            {
+                monster.Update(screenWidth, screenHeight);
+            }
+        }
+
+        // 清理已死亡的怪物
+        _monsters.RemoveAll(m => m.IsDead);
+
+        if (_monsters.Count == 0) return;
+
+        // 检测子弹与怪物的碰撞
+        for (int pIdx = _projectiles.Count - 1; pIdx >= 0; pIdx--)
+        {
+            var p = _projectiles[pIdx];
+            if (!p.IsActive) continue;
+
+            foreach (var monster in _monsters)
+            {
+                if (!monster.IsActive || monster.IsDead) continue;
+
+                var (centerX, centerY) = monster.GetCenter();
+                float pdx = p.X - centerX;
+                float pdy = p.Y - centerY;
+                float distSq = pdx * pdx + pdy * pdy;
+                float radius = monster.Size / 2.5f;
+
+                if (distSq < radius * radius)
+                {
+                    // 计算伤害
+                    int damage = p.Type switch
+                    {
+                        "CANNON" => 150,
+                        "LIGHTNING" => 80,
+                        "ROCKET" => 200,
+                        "PLASMA" => 120,
+                        "SPIT" => 50,
+                        "INK" => 60,
+                        _ => 100
+                    };
+
+                    monster.TakeDamage(damage);
+                    p.IsActive = false;
+
+                    // 如果怪物死亡，给予攻击者奖励
+                    if (monster.IsDead && p.Owner != null)
+                    {
+                        p.Owner.SetBark("🎉 击败了怪物！获得奖励！", 100);
+                        p.Owner.HP = Math.Min(p.Owner.MaxHP, p.Owner.HP + 200);
+                        p.Owner.Size = Math.Min(150, p.Owner.Size + 10);
+                    }
+
+                    break;
+                }
+            }
+        }
+
+        // 让机器人自动攻击怪物
+        foreach (var robot in _robots)
+        {
+            if (!robot.IsActive || robot.IsDead) continue;
+
+            // 如果机器人没有追逐目标，自动锁定怪物
+            if (robot.ChasingTarget == null || robot.ChasingTarget.IsDead)
+            {
+                var targetMonster = _monsters.FirstOrDefault(m => m.IsActive && !m.IsDead);
+                if (targetMonster != null)
+                {
+                    robot.SetMonsterTarget(targetMonster);
+                }
+            }
+        }
+    }
+
     private void ResetRound()
     {
         _isGameEnding = false;
         _winner = null;
         _resetTimer = 0;
         _projectiles.Clear(); // 清空所有旧子弹
+
+        // 清理怪物
+        _monsters.Clear();
 
         Random rnd = new Random();
         foreach (var r in _robots)
@@ -742,6 +1002,16 @@ public partial class Form1 : Form
 
     private void Form1_Paint(object? sender, PaintEventArgs e)
     {
+        // 摸鱼模式下绘制伪装界面
+        if (_bossMode)
+        {
+            PixelRobotRenderer.DrawBossModeIndicator(e.Graphics,
+                Screen.PrimaryScreen!.Bounds.Width,
+                Screen.PrimaryScreen.Bounds.Height,
+                _bossModeTheme);
+            return; // 不绘制机器人
+        }
+
         e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
         e.Graphics.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.Half;
 
@@ -843,6 +1113,13 @@ public partial class Form1 : Form
                     }
                     break;
             }
+        }
+
+        // 绘制怪物
+        foreach (var monster in _monsters)
+        {
+            if (monster.IsActive && !monster.IsDead)
+                MonsterRenderer.DrawMonster(e.Graphics, monster);
         }
     }
 
@@ -998,6 +1275,8 @@ public partial class Form1 : Form
         robot.AiThoughtFrequency = AiThoughtFrequency;
         robot.FightFrequency = FightFrequency;
         robot.IsWeaponMaster = IsWeaponMaster;
+        robot.PersonalityType = DefaultPersonality;
+        robot.InitializePersonalityTraits();
 
 
         _robots.Add(robot);
@@ -1020,6 +1299,9 @@ public partial class Form1 : Form
 
         Robot robot = new Robot(data.Id, data.Name, x, y);
         robot.Personality = data.Personality;
+        robot.PersonalityType = (RobotPersonalityType)data.PersonalityType;
+        robot.InitializePersonalityTraits();
+        robot.CurrentEmotion = (EmotionState)data.CurrentEmotion;
         robot.ConsciousnessLevel = data.ConsciousnessLevel;
         robot.Experience = data.Experience;
         robot.InternalGuidelines = data.InternalGuidelines;
@@ -1081,8 +1363,7 @@ public partial class Form1 : Form
             _settingsForm.AiThoughtFrequency = AiThoughtFrequency;
             _settingsForm.FightFrequency = FightFrequency;
             _settingsForm.IsWeaponMaster = IsWeaponMaster;
-
-            
+            _settingsForm.DefaultPersonality = DefaultPersonality;
             _settingsForm.FormClosed += (sender, args) =>
             {
                 if (_settingsForm.DialogResult == DialogResult.OK)
@@ -1095,6 +1376,7 @@ public partial class Form1 : Form
                     AiThoughtFrequency = _settingsForm.AiThoughtFrequency;
                     FightFrequency = _settingsForm.FightFrequency;
                     IsWeaponMaster = _settingsForm.IsWeaponMaster;
+                    DefaultPersonality = _settingsForm.DefaultPersonality;
 
 
                     foreach (var r in _robots) r.SpeedMultiplier = _globalSpeed / 100f;
@@ -1146,6 +1428,8 @@ public partial class Form1 : Form
 
         // 兜底清理逻辑
         UnregisterHotKey(this.Handle, HOTKEY_ID_PAUSE);
+        UnregisterHotKey(this.Handle, HOTKEY_ID_BOSS);
+        UnregisterHotKey(this.Handle, HOTKEY_ID_BOSS_CYCLE);
         _moveTimer?.Stop();
         _moveTimer?.Dispose();
         _notifyIcon?.Dispose();

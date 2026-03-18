@@ -62,19 +62,27 @@ public class Projectile
     public void Update()
     {
         // 锁定追踪逻辑 (目标死亡或子弹生命垂危时停止追踪)
-        if (TrackingTarget != null && TrackingTarget.IsActive && !TrackingTarget.IsDead && LifeTime > 50)
+        // 注意：不同投射物类型的 Lifetime 不同，使用比例判断更合适
+        float lifePercent = LifeTime / (float)GetInitialLifeTime(Type);
+        if (TrackingTarget != null && TrackingTarget.IsActive && !TrackingTarget.IsDead && lifePercent > 0.2f)
         {
             float tx = TrackingTarget.X + TrackingTarget.Size / 2;
             float ty = TrackingTarget.Y + TrackingTarget.Size / 2;
             float curDx = tx - X;
             float curDy = ty - Y;
             float dist = (float)Math.Max(1, Math.Sqrt(curDx * curDx + curDy * curDy));
-            
+
             float targetDx = (curDx / dist) * GetBaseSpeed(Type);
             float targetDy = (curDy / dist) * GetBaseSpeed(Type);
 
-            // 平滑修正轨迹
-            float lerp = (Type == "ROCKET" || Type == "PLASMA") ? 0.15f : 0.08f;
+            // 平滑修正轨迹 - 追踪能力取决于投射物类型
+            float lerp = Type switch {
+                "ROCKET" => 0.12f,    // 火箭追踪能力中等
+                "PLASMA" => 0.20f,    // 等离子追踪能力强
+                "LIGHTNING" => 0.25f, // 闪电追踪能力最强
+                "BULLET" => 0.05f,    // 子弹追踪能力弱
+                _ => 0.08f
+            };
             Dx = Dx * (1 - lerp) + targetDx * lerp;
             Dy = Dy * (1 - lerp) + targetDy * lerp;
         }
@@ -98,5 +106,14 @@ public class Projectile
 
         LifeTime--;
         if (LifeTime <= 0) IsActive = false;
+    }
+
+    private int GetInitialLifeTime(string type)
+    {
+        return type switch {
+            "LIGHTNING" => 30,
+            "CANNON" => 180,
+            _ => 150
+        };
     }
 }

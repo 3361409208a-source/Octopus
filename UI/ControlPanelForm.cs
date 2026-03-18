@@ -354,9 +354,9 @@ public class ControlPanelForm : Form
 
         var nameInput = new TextBox { Text = robot.Name };
         var personalityInput = new TextBox { Text = robot.Personality };
-        var sizeInput = new NumericUpDown { Minimum = 32, Maximum = 256, Value = robot.Size };
-        var speedInput = new NumericUpDown { Minimum = 0, Maximum = 500, Value = (decimal)(robot.SpeedMultiplier * 100) };
-        var levelInput = new NumericUpDown { Minimum = 1, Maximum = 100, Value = (decimal)robot.ConsciousnessLevel, DecimalPlaces = 1 };
+        var sizeInput = new NumericUpDown { Minimum = 32, Maximum = 256, Value = Math.Clamp(robot.Size, 32, 256) };
+        var speedInput = new NumericUpDown { Minimum = 0, Maximum = 500, Value = Math.Clamp((decimal)(robot.SpeedMultiplier * 100), 0, 500) };
+        var levelInput = new NumericUpDown { Minimum = 1, Maximum = 100, Value = Math.Clamp((decimal)robot.ConsciousnessLevel, 1, 100), DecimalPlaces = 1 };
         var guidelineInput = new TextBox { Text = robot.InternalGuidelines, Multiline = true, Height = 40 };
 
 
