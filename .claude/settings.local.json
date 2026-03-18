@@ -35,7 +35,8 @@
       "Bash(powershell -Command \"\\(Get-Content D:\\\\xiangmu\\\\sprite\\\\CockroachPet\\\\CockroachPet\\\\Rendering\\\\PixelRobotRenderer.cs | Select-Object -Skip 288 -First 10\\)\")",
       "Bash(ls -la *.csproj)",
       "Bash(ls -la CockroachPet/*.csproj)",
-      "Bash(find . -name *.csproj -maxdepth 2)"
+      "Bash(find . -name *.csproj -maxdepth 2)",
+      "Bash(git reset:*)"
     ]
   }
 }
