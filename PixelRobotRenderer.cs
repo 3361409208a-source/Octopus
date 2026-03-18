@@ -9,6 +9,7 @@ public static class PixelRobotRenderer
 
     public static void DrawRobot(Graphics g, Robot robot)
     {
+        float scale = robot.Size / 64.0f; // 缩放比例
         float x = robot.X + robot.ShakingOffset;
         float y = robot.Y;
         int size = robot.Size;
@@ -20,10 +21,12 @@ public static class PixelRobotRenderer
 
         // 1. 绘制相对于机器人的 UI 元素（始终正向显示）
         DrawName(g, robot, x, y);
+        DrawHealthBar(g, robot, x, y);
         DrawAlertBubble(g, robot, x, y);
         DrawEmojiBubble(g, robot, x, y);
         DrawChatBubble(g, robot, x, y);
         DrawThinkingIndicator(g, robot, x, y);
+        DrawDamageText(g, robot, x, y);
 
         // 2. 绘制机器人本体（包含翻转和旋转动画）
         var state = g.Save();
@@ -47,8 +50,8 @@ public static class PixelRobotRenderer
         float centerX = x + size / 2;
         float centerY = y + size / 2;
 
-        DrawTentacles(g, robot, centerX, centerY);
-        DrawBody(g, robot, centerX, centerY);
+        DrawTentacles(g, robot, centerX, centerY, scale);
+        DrawBody(g, robot, centerX, centerY, scale);
         
         // 眼睛和天线单独处理旋转，确保围绕中心转
         if (robot.SpecialState == "SPINNING")
@@ -58,8 +61,19 @@ public static class PixelRobotRenderer
             
             // 围绕局部中心旋转
             var m = g.Transform;
-            m.RotateAt(rotAngle, new PointF(centerX, centerY));
+            g.TranslateTransform(centerX, centerY);
+            g.RotateTransform(rotAngle);
+            g.TranslateTransform(-centerX, -centerY);
+            
+            DrawEyes(g, robot, centerX, centerY, scale);
+            DrawAntennas(g, robot, centerX, centerY, scale);
+            
             g.Transform = m;
+        }
+        else
+        {
+            DrawEyes(g, robot, centerX, centerY, scale);
+            DrawAntennas(g, robot, centerX, centerY, scale);
         }
         
         if (robot.SpecialState == "BLUSH")
@@ -67,8 +81,8 @@ public static class PixelRobotRenderer
             DrawBlush(g, robot, centerX, centerY);
         }
 
-        DrawEyes(g, robot, centerX, centerY);
-        DrawAntenna(g, robot, centerX, centerY);
+        // DrawEyes(g, robot, centerX, centerY); // This line is removed as it's now handled in the if/else above
+        // DrawAntenna(g, robot, centerX, centerY); // This line is removed as it's now handled in the if/else above
 
         g.Restore(state);
         
@@ -143,7 +157,29 @@ public static class PixelRobotRenderer
             }
         }
 
-        // 3. 物理互动视觉 (触手抓住)
+        // 4. 格斗碰撞特效 (星型冲击与闪烁)
+        if (robot.SpecialState == "SHAKING" && robot.DuelTimer > 0)
+        {
+            var r = new Random();
+            using (var impactBrush = new SolidBrush(Color.FromArgb(200, Color.White)))
+            using (var flashBrush = new SolidBrush(Color.FromArgb(100, Color.Yellow)))
+            {
+                // 冲击星
+                PointF[] points = new PointF[10];
+                float radiusOuter = 25 + r.Next(15);
+                float radiusInner = 10;
+                for (int i = 0; i < 10; i++)
+                {
+                    float angle = (float)(i * Math.PI * 2 / 10);
+                    float rad = (i % 2 == 0) ? radiusOuter : radiusInner;
+                    points[i] = new PointF(worldCenterX + (float)Math.Cos(angle) * rad, worldCenterY + (float)Math.Sin(angle) * rad);
+                }
+                g.FillPolygon(impactBrush, points);
+                g.FillEllipse(flashBrush, worldCenterX - radiusOuter, worldCenterY - radiusOuter, radiusOuter * 2, radiusOuter * 2);
+            }
+        }
+
+        // 5. 物理互动视觉 (触手抓住)
         if (robot.PhysicalAction != "NONE" && robot.PhysicalTarget != null)
         {
             DrawPhysicalInteraction(g, robot, worldCenterX, worldCenterY);
@@ -357,31 +393,36 @@ public static class PixelRobotRenderer
         g.FillPolygon(bubbleBrush, arrow);
     }
 
-    private static void DrawTentacles(Graphics g, Robot robot, float cx, float cy)
+    private static void DrawTentacles(Graphics g, Robot robot, float cx, float cy, float scale)
     {
-        using var tentacleBrush = new SolidBrush(robot.SecondaryColor);
+        Color tColor = robot.IsDead ? Color.FromArgb(100, 100, 100) : robot.SecondaryColor;
+        using var tentacleBrush = new SolidBrush(tColor);
 
         for (int i = 0; i < 8; i++)
         {
             float angle = (float)(i * Math.PI / 4 + robot.TentacleOffsets[i] * 0.1);
-            float wave = (float)Math.Sin(robot.TentacleOffsets[i] + i) * 5;
+            float wave = (float)Math.Sin(robot.TentacleOffsets[i] + i) * 5 * scale;
 
-            float startX = cx + (float)Math.Cos(angle) * 15;
-            float startY = cy + (float)Math.Sin(angle) * 15;
+            float startX = cx + (float)Math.Cos(angle) * 15 * scale;
+            float startY = cy + (float)Math.Sin(angle) * 15 * scale;
 
-            float length = 20 + wave;
+            float length = (20 + wave) * scale;
             float endX = startX + (float)Math.Cos(angle) * length;
             float endY = startY + (float)Math.Sin(angle) * length;
 
-            DrawPixelLine(g, tentacleBrush, startX, startY, endX, endY, 3);
-            g.FillRectangle(tentacleBrush, endX - 2, endY - 2, 4, 4);
+            DrawPixelLine(g, tentacleBrush, startX, startY, endX, endY, (int)Math.Max(1, 3 * scale));
+            g.FillRectangle(tentacleBrush, endX - 2 * scale, endY - 2 * scale, 4 * scale, 4 * scale);
         }
     }
 
-    private static void DrawBody(Graphics g, Robot robot, float cx, float cy)
+    private static void DrawBody(Graphics g, Robot robot, float cx, float cy, float scale)
     {
-        using var bodyBrush = new SolidBrush(robot.PrimaryColor);
-        using var bodyDarkBrush = new SolidBrush(robot.SecondaryColor);
+        Color pColor = robot.IsDead ? Color.FromArgb(130, 130, 130) : robot.PrimaryColor;
+        Color sColor = robot.IsDead ? Color.FromArgb(90, 90, 90) : robot.SecondaryColor;
+        using var bodyBrush = new SolidBrush(pColor);
+        using var bodyDarkBrush = new SolidBrush(sColor);
+
+        float pSize = PIXEL_SIZE * scale;
 
         for (int dx = -12; dx <= 12; dx++)
         {
@@ -389,37 +430,50 @@ public static class PixelRobotRenderer
             {
                 if (dx * dx + dy * dy <= 144)
                 {
-                    float px = cx + dx * PIXEL_SIZE / 2;
-                    float py = cy + dy * PIXEL_SIZE / 2;
+                    float px = cx + dx * pSize / 2;
+                    float py = cy + dy * pSize / 2;
 
                     var brush = (dx * dx + dy * dy > 100) ? bodyDarkBrush : bodyBrush;
-                    g.FillRectangle(brush, px - PIXEL_SIZE / 2, py - PIXEL_SIZE / 2, PIXEL_SIZE, PIXEL_SIZE);
+                    
+                    // 受击红闪覆盖
+                    if (robot.DamageFeedbackTimer > 0)
+                    {
+                        int alpha = Math.Min(255, robot.DamageFeedbackTimer * 4);
+                        using var hitBrush = new SolidBrush(Color.FromArgb(alpha, Color.Red));
+                        g.FillRectangle(brush, px - pSize / 2, py - pSize / 2, pSize, pSize);
+                        g.FillRectangle(hitBrush, px - pSize / 2, py - pSize / 2, pSize, pSize);
+                    }
+                    else
+                    {
+                        g.FillRectangle(brush, px - pSize / 2, py - pSize / 2, pSize, pSize);
+                    }
                 }
             }
         }
 
         using var coreBrush = new SolidBrush(Color.FromArgb(200, 255, 255, 255));
         float corePulse = 1 + (float)Math.Sin(robot.AnimationFrame * Math.PI / 2) * 0.2f;
-        float coreSize = 6 * corePulse;
-        g.FillRectangle(coreBrush, cx - coreSize / 2, cy - coreSize / 2 + 5, coreSize, coreSize);
+        float coreSize = 6 * corePulse * scale;
+        g.FillRectangle(coreBrush, cx - coreSize / 2, cy - coreSize / 2 + 5 * scale, coreSize, coreSize);
     }
 
-    private static void DrawEyes(Graphics g, Robot robot, float cx, float cy)
+    private static void DrawEyes(Graphics g, Robot robot, float cx, float cy, float scale)
     {
-        float eyeY = cy - 5;
-        float leftEyeX = cx - 8;
-        float rightEyeX = cx + 8;
+        float eyeY = cy - 5 * scale;
+        float leftEyeX = cx - 8 * scale;
+        float rightEyeX = cx + 8 * scale;
 
         int blinkFrame = robot.AnimationFrame;
         bool isBlinking = blinkFrame == 2 || robot.SpecialState == "SLEEPY";
         
         if (robot.SpecialState == "ANGRY")
         {
-            DrawAngryEyes(g, robot, cx, cy);
+            DrawAngryEyes(g, robot, cx, cy, scale);
             return;
         }
 
-        float eyeHeight = isBlinking ? 2 : 8;
+        float eyeHeight = (isBlinking ? 2 : 8) * scale;
+        float eyeWidth = 10 * scale;
 
         using var eyeWhiteBrush = new SolidBrush(Color.White);
         using var eyeBrush = new SolidBrush(robot.EyeColor);
@@ -427,32 +481,32 @@ public static class PixelRobotRenderer
         using var heartBrush = new SolidBrush(Color.HotPink);
 
         // 左眼
-        DrawPixelEllipse(g, eyeWhiteBrush, leftEyeX, eyeY, 10, eyeHeight);
-        if (!isBlinking)
+        DrawPixelEllipse(g, eyeWhiteBrush, leftEyeX, eyeY, eyeWidth, eyeHeight);
+        if (!isBlinking && !robot.IsDead)
         {
             if (robot.SpecialState == "HEART_EYES")
             {
-                DrawHeart(g, heartBrush, leftEyeX, eyeY, 8);
+                DrawHeart(g, heartBrush, leftEyeX, eyeY, 8 * scale);
             }
             else
             {
-                DrawPixelEllipse(g, eyeBrush, leftEyeX + 1, eyeY, 6, 6);
-                g.FillRectangle(pupilBrush, leftEyeX + 1, eyeY - 1, 2, 4);
+                DrawPixelEllipse(g, eyeBrush, leftEyeX + 1 * scale, eyeY, 6 * scale, 6 * scale);
+                g.FillRectangle(pupilBrush, leftEyeX + 1 * scale, eyeY - 1 * scale, 2 * scale, 4 * scale);
             }
         }
 
         // 右眼
-        DrawPixelEllipse(g, eyeWhiteBrush, rightEyeX, eyeY, 10, eyeHeight);
-        if (!isBlinking)
+        DrawPixelEllipse(g, eyeWhiteBrush, rightEyeX, eyeY, eyeWidth, eyeHeight);
+        if (!isBlinking && !robot.IsDead)
         {
             if (robot.SpecialState == "HEART_EYES")
             {
-                DrawHeart(g, heartBrush, rightEyeX, eyeY, 8);
+                DrawHeart(g, heartBrush, rightEyeX, eyeY, 8 * scale);
             }
             else
             {
-                DrawPixelEllipse(g, eyeBrush, rightEyeX + 1, eyeY, 6, 6);
-                g.FillRectangle(pupilBrush, rightEyeX + 1, eyeY - 1, 2, 4);
+                DrawPixelEllipse(g, eyeBrush, rightEyeX + 1 * scale, eyeY, 6 * scale, 6 * scale);
+                g.FillRectangle(pupilBrush, rightEyeX + 1 * scale, eyeY - 1 * scale, 2 * scale, 4 * scale);
             }
         }
     }
@@ -471,20 +525,20 @@ public static class PixelRobotRenderer
         g.FillPolygon(brush, points);
     }
 
-    private static void DrawAngryEyes(Graphics g, Robot robot, float cx, float cy)
+    private static void DrawAngryEyes(Graphics g, Robot robot, float cx, float cy, float scale)
     {
         using var eyeBrush = new SolidBrush(Color.Red);
-        using var pen = new Pen(eyeBrush, 3);
+        using var pen = new Pen(eyeBrush, 3 * scale);
         
         // 愤怒的 V 型眼
-        g.DrawLine(pen, cx - 12, cy - 10, cx - 4, cy - 4);
-        g.DrawLine(pen, cx - 12, cy - 4, cx - 4, cy - 10); // 左眼 X
+        g.DrawLine(pen, cx - 12 * scale, cy - 10 * scale, cx - 4 * scale, cy - 4 * scale);
+        g.DrawLine(pen, cx - 12 * scale, cy - 4 * scale, cx - 4 * scale, cy - 10 * scale); // 左眼 X
         
-        g.DrawLine(pen, cx + 4, cy - 10, cx + 12, cy - 4);
-        g.DrawLine(pen, cx + 4, cy - 4, cx + 12, cy - 10); // 右眼 X
+        g.DrawLine(pen, cx + 4 * scale, cy - 10 * scale, cx + 12 * scale, cy - 4 * scale);
+        g.DrawLine(pen, cx + 4 * scale, cy - 4 * scale, cx + 12 * scale, cy - 10 * scale); // 右眼 X
     }
 
-    private static void DrawAntenna(Graphics g, Robot robot, float cx, float cy)
+    private static void DrawAntennas(Graphics g, Robot robot, float cx, float cy, float scale)
     {
         using var antennaBrush = new SolidBrush(robot.SecondaryColor);
         
@@ -496,13 +550,13 @@ public static class PixelRobotRenderer
         }
         using var tipBrush = new SolidBrush(tipColor);
 
-        float wave = (float)Math.Sin(robot.AnimationFrame * Math.PI / 2) * 3;
+        float wave = (float)Math.Sin(robot.AnimationFrame * Math.PI / 2) * 3 * scale;
 
-        DrawPixelLine(g, antennaBrush, cx - 8, cy - 15, cx - 12 + wave, cy - 28, 2);
-        g.FillRectangle(tipBrush, cx - 13 + wave, cy - 30, 4, 4);
+        DrawPixelLine(g, antennaBrush, cx - 8 * scale, cy - 15 * scale, cx - 12 * scale + wave, cy - 28 * scale, (int)Math.Max(1, 2 * scale));
+        g.FillRectangle(tipBrush, cx - 13 * scale + wave, cy - 30 * scale, 4 * scale, 4 * scale);
 
-        DrawPixelLine(g, antennaBrush, cx + 8, cy - 15, cx + 12 + wave, cy - 28, 2);
-        g.FillRectangle(tipBrush, cx + 11 + wave, cy - 30, 4, 4);
+        DrawPixelLine(g, antennaBrush, cx + 8 * scale, cy - 15 * scale, cx + 12 * scale + wave, cy - 28 * scale, (int)Math.Max(1, 2 * scale));
+        g.FillRectangle(tipBrush, cx + 11 * scale + wave, cy - 30 * scale, 4 * scale, 4 * scale);
     }
 
     private static void DrawName(Graphics g, Robot robot, float rx, float ry)
@@ -520,6 +574,43 @@ public static class PixelRobotRenderer
             new StringFormat { Alignment = StringAlignment.Center });
         g.DrawString(robot.Name, font, brush, textX, textY,
             new StringFormat { Alignment = StringAlignment.Center });
+    }
+
+    private static void DrawHealthBar(Graphics g, Robot robot, float rx, float ry)
+    {
+        if (robot.IsDead) return;
+        float barWidth = robot.Size * 0.8f;
+        float barHeight = 4;
+        float bx = rx + (robot.Size - barWidth) / 2;
+        float by = ry - 8;
+
+        // 背景
+        g.FillRectangle(Brushes.Gray, bx, by, barWidth, barHeight);
+        
+        // 血条
+        float hpPercent = (float)robot.HP / robot.MaxHP;
+        Color hpColor = hpPercent > 0.5 ? Color.Lime : (hpPercent > 0.2 ? Color.Yellow : Color.Red);
+        using var hpBrush = new SolidBrush(hpColor);
+        g.FillRectangle(hpBrush, bx, by, barWidth * hpPercent, barHeight);
+        
+        // 边框
+        g.DrawRectangle(Pens.Black, bx, by, barWidth, barHeight);
+    }
+
+    private static void DrawDamageText(Graphics g, Robot robot, float rx, float ry)
+    {
+        if (robot.DamageTextTimer <= 0) return;
+
+        float alpha = Math.Min(255, robot.DamageTextTimer * 5);
+        using var font = new Font("Impact", 14, FontStyle.Bold);
+        using var brush = new SolidBrush(Color.FromArgb((int)alpha, Color.OrangeRed));
+        
+        float floatOffset = (45 - robot.DamageTextTimer) * 1.5f;
+        float tx = rx + robot.Size / 2;
+        float ty = ry - 20 - floatOffset;
+
+        g.DrawString(robot.LastDamageText, font, Brushes.Black, tx + 1, ty + 1, new StringFormat { Alignment = StringAlignment.Center });
+        g.DrawString(robot.LastDamageText, font, brush, tx, ty, new StringFormat { Alignment = StringAlignment.Center });
     }
 
     private static void DrawPixelLine(Graphics g, Brush brush, float x1, float y1, float x2, float y2, int thickness)

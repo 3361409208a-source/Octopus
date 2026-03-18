@@ -8,7 +8,10 @@
       "Bash(taskkill:*)",
       "Bash(start:*)",
       "Bash(wmic process:*)",
-      "Bash(dotnet run:*)"
+      "Bash(dotnet run:*)",
+      "Skill(review)",
+      "Bash(git push:*)",
+      "Bash(git add:*)"
     ]
   }
 }

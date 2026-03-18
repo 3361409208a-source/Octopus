@@ -59,6 +59,11 @@ public partial class Form1 : Form
     // 设置窗口单例
     private SettingsForm? _settingsForm = null;
 
+    public bool IsGameEnding => _isGameEnding;
+    private bool _isGameEnding = false; // 标记是否正在执行胜者吞噬逻辑
+    private Robot? _winner = null;
+    private int _resetTimer = 0;
+
     // 控制面板单例
     private ControlPanelForm? _controlPanel = null;
 
@@ -593,17 +598,146 @@ public partial class Form1 : Form
         for (int i = 0; i < _robots.Count; i++)
         {
             var r1 = _robots[i];
-            if (!r1.IsVisible || !r1.IsActive) continue;
+            if (!r1.IsVisible || !r1.IsActive || r1.IsDead) continue;
 
             for (int j = i + 1; j < _robots.Count; j++)
             {
                 var r2 = _robots[j];
-                if (r2.IsVisible && r2.IsActive)
+                if (r2.IsVisible && r2.IsActive && !r2.IsDead)
                     r1.InteractWith(r2);
             }
         }
 
+        // 4. 胜者吞噬与回合重置逻辑
+        HandleGameRules(screenWidth, screenHeight);
+
         this.Invalidate();
+    }
+
+    private void HandleGameRules(int sw, int sh)
+    {
+        if (_isGameEnding)
+        {
+            if (_winner == null || !_winner.IsActive) { ResetRound(); return; }
+
+            var deadRobots = _robots.Where(r => r.IsDead && r.IsVisible).ToList();
+            if (deadRobots.Count > 0)
+            {
+                // 胜者飞向最近的尸体
+                var target = deadRobots.OrderBy(r => Math.Pow(r.X - _winner.X, 2) + Math.Pow(r.Y - _winner.Y, 2)).First();
+                float dx = target.X - _winner.X;
+                float dy = target.Y - _winner.Y;
+                float dist = (float)Math.Sqrt(dx * dx + dy * dy);
+
+                if (dist < 40)
+                {
+                    // 吞噬！
+                    target.IsVisible = false;
+                    _winner.Size = Math.Min(250, (int)(_winner.Size * 1.3f)); // 限制最大体积，防止撑爆屏幕
+                    _winner.HP = Math.Min(_winner.MaxHP, _winner.HP + 100);
+                    _winner.SetBark("吞噬成功！力量在增长！💪", 40);
+                }
+                else
+                {
+                    // 强制移动，大幅提速
+                    _winner.X += (dx / dist) * 20;
+                    _winner.Y += (dy / dist) * 20;
+                    _winner.Dx = 0; _winner.Dy = 0;
+                }
+            }
+            else
+            {
+                // 所有尸体吃完，胜者巡场走动
+                _resetTimer++;
+                
+                // 每 40 帧随机变换一次移动方向，模拟巡场
+                if (_resetTimer % 40 == 0)
+                {
+                    Random rnd = new Random();
+                    double angle = rnd.NextDouble() * Math.PI * 2;
+                    _winner.Dx = (float)Math.Cos(angle) * 8;
+                    _winner.Dy = (float)Math.Sin(angle) * 8;
+                }
+
+                _winner.X += _winner.Dx;
+                _winner.Y += _winner.Dy;
+                _winner.Dx *= 0.97f;
+                _winner.Dy *= 0.97f;
+
+                _winner.SpecialState = "SPINNING";
+                if (_resetTimer == 30) _winner.SetBark("我是最强的霸主！无可匹敌！👑", 100);
+                if (_resetTimer == 120) _winner.SetBark("重启像素协议...准备开启下个纪元。🌀", 120);
+                
+                if (_resetTimer > 250)
+                {
+                    ResetRound();
+                }
+            }
+            return;
+        }
+
+        // 检测胜者
+        var survivors = _robots.Where(r => !r.IsDead && r.IsVisible).ToList();
+        if (_robots.Count > 1)
+        {
+            if (survivors.Count == 1)
+            {
+                _isGameEnding = true;
+                _winner = survivors[0];
+                _winner.SetBark("最后的赢家诞生了！我要享用我的奖赏！😋", 150);
+                _resetTimer = 0;
+                _projectiles.Clear();
+            }
+            else if (survivors.Count == 0)
+            {
+                ResetRound();
+            }
+        }
+    }
+
+    private void ResetRound()
+    {
+        _isGameEnding = false;
+        _winner = null;
+        _resetTimer = 0;
+        _projectiles.Clear(); // 清空所有旧子弹
+
+        Random rnd = new Random();
+        foreach (var r in _robots)
+        {
+            r.IsDead = false;
+            r.IsVisible = true;
+            r.IsActive = true;
+            r.IsMoving = true;
+            r.HP = r.MaxHP;
+            r.Size = r.OriginalSize;
+            r.X = rnd.Next(Screen.PrimaryScreen.Bounds.Width - 100);
+            r.Y = rnd.Next(Screen.PrimaryScreen.Bounds.Height - 100);
+            
+            // 立即启动动力系统：更快的起始速度
+            double angle = rnd.NextDouble() * Math.PI * 2;
+            float speed = 3.5f + (float)rnd.NextDouble() * 3.0f; // 大幅提高复活后的起始初速度
+            r.Dx = (float)Math.Cos(angle) * speed;
+            r.Dy = (float)Math.Sin(angle) * speed;
+            
+            r.RotationAngle = 0;
+            r.PauseTimer = 0;
+            r.StunTimer = 0;
+            r.SlowTimer = 0;
+            r.ChaseTimer = 0;
+            r.DuelTimer = 0;
+            r.AggressionTimer = 0;
+            r.SpecialState = "NORMAL";
+            r.IsFiringLaser = false;
+            r.IsAiSpeaking = false;
+            r.ChatTimer = 0;
+            r.EmojiBubbleTimer = 0;
+            r.StunTimer = 0;
+            r.BlindTimer = 0;
+            r.SocialCooldown = 0;
+
+            r.SetBark("新纪元重组完成！战斗继续！⚡", 100);
+        }
     }
 
     private void Form1_Paint(object? sender, PaintEventArgs e)

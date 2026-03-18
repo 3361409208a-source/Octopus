@@ -44,12 +44,21 @@ public class Robot
     // 速度倍率
     public float SpeedMultiplier { get; set; } = 1.0f;
 
+    // 生命值系统
+    public int HP { get; set; } = 1000;
+    public int MaxHP { get; set; } = 1000;
+    public int DamageFeedbackTimer { get; set; } = 0; // 受击红闪透明度控制
+    public string LastDamageText { get; set; } = ""; // 漂浮文字内容
+    public int DamageTextTimer { get; set; } = 0; // 漂浮文字计时
+
     // 终端状态
     public string LastOutput { get; set; } = "";
     public string StatusMessage { get; set; } = "IDLE";
     public string AlertMessage { get; set; } = "";
     public bool IsWarning { get; set; } = false;
     public int WarningTimer { get; set; } = 0;
+    public bool IsDead { get; set; } = false; // 死亡状态
+    public int OriginalSize { get; set; } = 64; // 记录原始大小用于恢复
     public event Action<string>? OnTerminalOutput;
     
     // AI 自主思考设置
@@ -125,11 +134,12 @@ public class Robot
     public event Action<Robot>? OnGrowthUpdated;
     
     // 是否忙碌（正在进行互动/动画/AI思考）
-    public bool IsBusy => PhysicalAction != "NONE" || PullingMe != null || _isThinking || IsBeingThrown;
+    public bool IsBusy => IsDead || PhysicalAction != "NONE" || PullingMe != null || _isThinking || IsBeingThrown;
 
     // 自定义词库 (用户设置)
     public List<string> CustomPhrases { get; set; } = new List<string>();
     private int _customPhraseTimer = 300; // 约 10s 检查一次台词触发
+    public int AggressionTimer { get; set; } = 0; // 反“渔翁得利”计时器
 
     // 随机行为
     public int PauseTimer { get; set; } = 0;
@@ -186,6 +196,7 @@ public class Robot
 
         // 初始化自愈/进化逻辑 (v1.2.16)
         _selfImproving = new SelfImprovingManager(Id, Name);
+        OriginalSize = Size;
     }
 
     private void InitializeDefaultSkills()
@@ -208,6 +219,25 @@ public class Robot
 
     public void Update(int screenWidth, int screenHeight)
     {
+        // 1. 基础物理边界限制 (确保所有状态都不越界)
+        if (X < 0) { X = 0; Dx = -Dx; }
+        if (X > screenWidth - Size) { X = screenWidth - Size; Dx = -Dx; }
+        if (Y < 0) { Y = 0; Dy = -Dy; }
+        if (Y > screenHeight - Size) { Y = screenHeight - Size; Dy = -Dy; }
+
+        // 如果游戏进入终局（胜者吞噬阶段），仅执行基础位移
+        if (Form1.Instance != null && Form1.Instance.IsGameEnding)
+        {
+            if (IsDead) { Dx = 0; Dy = 0; return; } // 尸体禁止乱动
+            X += Dx;
+            Y += Dy;
+            // 终局下依然应用摩擦力
+            Dx *= 0.98f;
+            Dy *= 0.98f;
+            return;
+        }
+
+        if (!IsActive) return;
         if (ShootCooldown > 0) ShootCooldown--;
 
         if (WarningTimer > 0)
@@ -317,7 +347,7 @@ public class Robot
             if (_delayedAttackTimer == 0 && _delayedAttackTarget != null)
             {
                 IsFiringLaser = false;
-                if (_delayedAttackTarget.IsActive)
+                if (_delayedAttackTarget.IsActive && !_delayedAttackTarget.IsDead)
                 {
                     _delayedAttackTarget.ApplyAttackEffect();
                     _delayedAttackTarget.ChasingTarget = this;
@@ -344,85 +374,123 @@ public class Robot
             return;
         }
 
-        // 陀螺格斗逻辑 (增强版：冲锋与碰撞)
+        // 陀螺格斗逻辑 (究极重构：对冲碰撞版)
         if (DuelTimer > 0 && DuelTarget != null && DuelTarget.IsActive)
         {
+            if (DuelTarget.IsDead)
+            {
+                DuelTimer = 0;
+                DuelTarget = null;
+                RotationAngle = 0;
+                return;
+            }
             DuelTimer--;
             
-            // 1. 基础旋转角
-            _duelAngle += 0.5f + (float)Rand.NextDouble() * 0.2f; 
+            // 1. 寻找格斗中心点
+            float centerX = (X + DuelTarget.X) / 2;
+            float centerY = (Y + DuelTarget.Y) / 2;
             
-            // 2. 实现“冲锋-弹开”呼吸感
-            // 使用正弦波控制半径，但增加不规则脉冲
-            float pulse = (float)Math.Sin(DuelTimer * 0.3f);
-            float baseRadius = 30 + (float)Math.Sin(DuelTimer * 0.05f) * 20;
-            float radius = baseRadius + pulse * 15;
+            // 2. 格斗节奏控制 (每 40 帧一个冲锋轮回)
+            int phase = DuelTimer % 40;
+            float radius = 0;
             
-            // 3. 寻找格斗质心 (带随机漂移)
-            float driftX = (float)Math.Sin(DuelTimer * 0.2f) * 10;
-            float driftY = (float)Math.Cos(DuelTimer * 0.2f) * 10;
-            float centerX = (X + DuelTarget.X) / 2 + driftX;
-            float centerY = (Y + DuelTarget.Y) / 2 + driftY;
-            
-            // 4. 应用位置 (如果是偶数索引的机器人，绕行方向相反)
-            float finalAngle = (Id % 2 == 0) ? _duelAngle : _duelAngle + (float)Math.PI;
-            X = centerX + (float)Math.Cos(finalAngle) * radius;
-            Y = centerY + (float)Math.Sin(finalAngle) * radius;
-            
-            // 5. 极致视觉反馈
-            if (pulse > 0.8f) // 冲锋碰撞瞬间
+            if (phase > 25) // 阶段 A：蓄力/后撤 (40 -> 26)
             {
+                // 缓慢拉开距离，准备下一次冲击
+                radius = 40 + (40 - phase) * 4; 
+                SpecialState = "NORMAL";
+            }
+            else if (phase > 10) // 阶段 B：极速对冲 (25 -> 11)
+            {
+                // 距离瞬间归零，模拟撞击
+                radius = (phase - 10) * 5; 
+                SpecialState = "ANGRY";
+                if (phase == 15) // 近战爆发台词
+                {
+                    string[] clashBarks = { "吃我一记冲撞！", "💥 像素碎裂！", "给老子死！", "铁拳制裁！" };
+                    SetBark(clashBarks[Rand.Next(clashBarks.Length)], 30);
+                }
+            }
+            else // 阶段 C：肉搏碰撞瞬间 (10 -> 0)
+            {
+                // 贴脸剧烈磨蹭，疯狂开火
+                radius = (float)Rand.NextDouble() * 8; 
                 SpecialState = "SHAKING";
                 SpecialStateTimer = 2;
-                RotationAngle += 50f; // 极速自旋
-                if (DuelTimer % 5 == 0) LaunchRemoteAttack(DuelTarget); // 贴脸连发
-            }
-            else
-            {
-                SpecialState = "SPINNING";
-                SpecialStateTimer = 2;
-                RotationAngle += 35f;
-                if (DuelTimer % 15 == 0) LaunchRemoteAttack(DuelTarget);
+                RotationAngle += 60f; // 极速旋转
+                
+                // 碰撞瞬间极致开火 (频率略微降级，防止瞬间蒸发导致总是同归于尽)
+                if (phase % 4 == 0) LaunchRemoteAttack(DuelTarget);
+                
+                // 屏幕抖动感位移
+                X += (float)(Rand.NextDouble() - 0.5) * 15;
+                Y += (float)(Rand.NextDouble() - 0.5) * 15;
             }
             
-            // 6. 战斗台词
-            if (DuelTimer % 40 == 0)
-            {
-                string[] fightLines = { "看招！", "吃我一记！", "像素冲击！", "⚡⚡⚡", "💥💥💥", "接招吧！" };
-                SetBark(fightLines[Rand.Next(fightLines.Length)], 40);
-            }
+            // 3. 应用位置逻辑
+            float dirX = (Id % 2 == 0) ? 1 : -1;
+            float angle = (float)(Math.PI / 4 + (Id % 2) * Math.PI); // 保持对冲轴
+            
+            // 增加一点旋转偏转，让格斗轴线随时间转动，不至于死板
+            float globalRotate = (DuelTimer / 100f) * (float)Math.PI;
+            float finalAngle = angle + globalRotate;
+            
+            X = centerX + (float)Math.Cos(finalAngle) * radius;
+            Y = centerY + (float)Math.Sin(finalAngle) * radius;
 
             if (DuelTimer == 0)
             {
                 DuelTarget = null;
-                // 终结技：强力弹开
-                float escapeAngle = finalAngle + (float)(Rand.NextDouble() - 0.5);
-                Dx = (float)Math.Cos(escapeAngle) * 25;
-                Dy = (float)Math.Sin(escapeAngle) * 25;
-                SetBark("还没完呢！", 80);
+                // 最后的强力终结弹开
+                float escapeX = X - centerX;
+                float escapeY = Y - centerY;
+                float eDist = (float)Math.Max(1, Math.Sqrt(escapeX * escapeX + escapeY * escapeY));
+                Dx = (escapeX / eDist) * 30;
+                Dy = (escapeY / eDist) * 30;
+                SetBark("像素核心...爆发！🔥", 100);
             }
-            return; // 陀螺模式下跳过常规移动
+            return; // 模式锁定
         }
 
         // 追逐逻辑与边追边射
         if (ChaseTimer > 0 && ChasingTarget != null)
         {
+            if (ChasingTarget.IsDead)
+            {
+                ChaseTimer = 0;
+                ChasingTarget = null;
+                return;
+            }
             ChaseTimer--;
             float tx = ChasingTarget.X - X;
             float ty = ChasingTarget.Y - Y;
             float tdist = (float)Math.Sqrt(tx * tx + ty * ty);
             
-            if (tdist > 30) // 追逐中
+            if (tdist > 40) // 追逐中：补全位移逻辑
             {
-                Dx = (Dx * 0.9f) + (tx / tdist * 0.4f * SpeedMultiplier);
-                Dy = (Dy * 0.9f) + (ty / tdist * 0.4f * SpeedMultiplier);
+                Dx = (Dx * 0.9f) + (tx / tdist * 0.5f * SpeedMultiplier);
+                Dy = (Dy * 0.9f) + (ty / tdist * 0.5f * SpeedMultiplier);
                 
-                // 边追边射：追逐时如果冷却好了就开火
-                if (ShootCooldown == 0 && Rand.Next(100) < 5) 
-                {
-                    LaunchRemoteAttack(ChasingTarget);
-                }
+                // 边追边射
+                if (ShootCooldown == 0 && Rand.Next(100) < 5) LaunchRemoteAttack(ChasingTarget);
             }
+            else // 真正追上了
+            {
+                int aliveCount = Form1.Instance?.GetRobots().Count(r => !r.IsDead && r.IsVisible && r.IsActive) ?? 0;
+                // 严格遵循：偶数格斗，奇数射击
+                if (aliveCount > 0 && aliveCount % 2 == 0)
+                {
+                    StartDuel(ChasingTarget);
+                }
+                else
+                {
+                    if (ShootCooldown == 0) LaunchRemoteAttack(ChasingTarget);
+                    PerformPush(ChasingTarget);
+                }
+                ChaseTimer = 0;
+                ChasingTarget = null;
+            }
+            
             if (ChaseTimer == 0) ChasingTarget = null;
         }
 
@@ -437,32 +505,32 @@ public class Robot
         Dy = (float)Math.Sin(angle) * speed;
         }
 
-        // 移动
+        // 移动与摩擦力
         float finalSpeed = SpeedMultiplier;
         if (SlowTimer > 0) finalSpeed *= 0.4f;
         if (StunTimer > 0) finalSpeed = 0; // 麻痹不能移动
 
         X += Dx * finalSpeed;
         Y += Dy * finalSpeed;
+        
+        // 全局摩擦力：使爆发速度逐渐平稳
+        Dx *= 0.98f;
+        Dy *= 0.98f;
 
-        // 边界检测
-        if (X <= 0 || X >= screenWidth - Size)
-        {
-            Dx = -Dx;
-            FacingRight = Dx > 0;
-            X = Math.Max(0, Math.Min(X, screenWidth - Size));
-        }
-
-        if (Y <= 0 || Y >= screenHeight - Size)
-        {
-            Dy = -Dy;
-            Y = Math.Max(0, Math.Min(Y, screenHeight - Size));
-        }
+        // 边界反馈已移至开头
+        FacingRight = Dx >= 0;
 
         // 社交与跟随逻辑
         if (FollowTimer > 0 && FollowingTarget != null && FollowingTarget.IsActive)
         {
-            FollowTimer--;
+            if (FollowingTarget.IsDead)
+            {
+                FollowTimer = 0;
+                FollowingTarget = null;
+            }
+            else
+            {
+                FollowTimer--;
             // 缓慢靠近目标
             float targetDx = FollowingTarget.X - X;
             float targetDy = FollowingTarget.Y - Y;
@@ -472,7 +540,8 @@ public class Robot
                 Dx = (Dx * 0.95f) + (targetDx / dist * 0.1f * SpeedMultiplier);
                 Dy = (Dy * 0.95f) + (targetDy / dist * 0.1f * SpeedMultiplier);
             }
-            if (FollowTimer == 0) FollowingTarget = null;
+                if (FollowTimer == 0) FollowingTarget = null;
+            }
         }
 
         if (MeetingTimer > 0)
@@ -485,7 +554,35 @@ public class Robot
 
         if (SocialCooldown > 0) SocialCooldown--;
         if (ChatTimer > 0) ChatTimer--;
+        if (DamageTextTimer > 0) DamageTextTimer--;
+        if (DamageFeedbackTimer > 0) DamageFeedbackTimer--;
         
+        // 自动回血逻辑 (非格斗模式且未死亡下)
+        if (DuelTimer == 0 && DuelTarget == null && !IsDead && HP < MaxHP && Rand.Next(100) < 5) 
+        {
+            HP = Math.Min(MaxHP, HP + 1);
+        }
+
+        // 生命耗尽处理
+        if (HP <= 0 && !IsDead)
+        {
+            IsDead = true;
+            IsMoving = false;
+            SpecialState = "NORMAL";
+            RotationAngle = 90f; // 侧倒死亡
+            SetBark("核心崩溃...系统下线 💀", 200);
+            Dx = 0; Dy = 0;
+        }
+
+        if (IsDead) 
+        {
+            Dx = 0; Dy = 0; // 彻底锁死位移
+            // 即使死亡，也要保持位置修正
+            X = Math.Max(0, Math.Min(X, screenWidth - Size));
+            Y = Math.Max(0, Math.Min(Y, screenHeight - Size));
+            return; 
+        }
+
         // 流式文字逻辑
         UpdateStreamingChat();
 
@@ -535,11 +632,38 @@ public class Robot
                 ShakingOffset = 0;
             }
         }
-        else if (Rand.Next(1000) < 5) // 0.5% 概率触发随机动画
+        else 
         {
-            string[] states = { "HEART_EYES", "SPINNING", "BLUSH", "SLEEPY", "ANGRY" };
-            SpecialState = states[Rand.Next(states.Length)];
-            SpecialStateTimer = Rand.Next(60, 180);
+            // 反“渔翁得利”逻辑：如果长期处于空闲状态，强制寻找目标
+            if (DuelTimer == 0 && ChaseTimer == 0 && FollowingTarget == null && !IsDead)
+            {
+                AggressionTimer++;
+                if (AggressionTimer > 600) // 约 10 秒没动静
+                {
+                    var targets = Form1.Instance?.GetRobots()
+                                   .Where(r => r != this && !r.IsDead && r.IsVisible)
+                                   .OrderByDescending(r => r.HP)
+                                   .ToList();
+                    if (targets != null && targets.Count > 0)
+                    {
+                        ChasingTarget = targets[0];
+                        ChaseTimer = 300;
+                        SetBark($"{ChasingTarget.Name}，别在那划水了！过两招！💢", 100);
+                        AggressionTimer = 0;
+                    }
+                }
+            }
+            else
+            {
+                AggressionTimer = 0;
+            }
+
+            if (Rand.Next(1000) < 5) // 0.5% 概率触发随机动画
+            {
+                string[] states = { "HEART_EYES", "SPINNING", "BLUSH", "SLEEPY", "ANGRY" };
+                SpecialState = states[Rand.Next(states.Length)];
+                SpecialStateTimer = Rand.Next(60, 180);
+            }
         }
 
         // 武器大师视觉增强：保持愤怒眼神
@@ -778,59 +902,73 @@ public class Robot
     public void InteractWith(Robot other)
     {
         if (SocialCooldown > 0 || other.SocialCooldown > 0) return;
-        if (IsBusy || other.IsBusy) return; // 忙碌中的机器人不主动发起新互动
+        if (IsBusy || other.IsBusy) return;
 
         float dx = other.X - X;
         float dy = other.Y - Y;
         float dist = (float)Math.Sqrt(dx * dx + dy * dy);
 
-        if (dist < 45) // 非常近：碰撞反弹或近战攻击
+        // 获取当前存活人数 (核心战略判断)
+        int aliveCount = Form1.Instance?.GetRobots().Count(r => !r.IsDead && r.IsVisible && r.IsActive) ?? 0;
+
+        if (aliveCount % 2 != 0)
         {
-            int action = Rand.Next(100);
-            
-            // 锁定打架几率
-            int fightThreshold = FightFrequency;
-            
-            if (action < fightThreshold + 15) // 陀螺格斗触发
+            // --- 方案 A：奇数存活 - 严格远程狙击模式 ---
+            if (dist < 100)
             {
-                StartDuel(other);
+                // 奇数时严禁近战（防止死循环），靠得太近就强制推开并补枪
+                PerformPush(other);
+                SocialCooldown = 45;
+                other.SocialCooldown = 45;
+                if (ShootCooldown == 0) LaunchRemoteAttack(other);
+                SetBark("人太多了，离我远点射击！", 60);
             }
-            else
+            else if (dist < 600 && ShootCooldown == 0)
             {
-                // 其余物理互动
-                int subAction = Rand.Next(3);
-                switch (subAction)
+                // 保持高频率远程互射
+                int chance = IsWeaponMaster ? 40 : 20;
+                if (Rand.Next(100) < chance)
                 {
-                    case 0: PerformPush(other); break;
-                    case 1: PerformPull(other); break;
-                    case 2: PerformGrab(other); break;
+                    LaunchRemoteAttack(other);
+                    SocialCooldown = 60;
                 }
             }
-            SocialCooldown = 90;
-            other.SocialCooldown = 90;
         }
-        else if (dist > 150 && ShootCooldown == 0 && (Rand.Next(1000) < 20 || (IsWeaponMaster && Rand.Next(100) < 10))) // 武器大师模式极大增加远射频率
+        else
         {
-            LaunchRemoteAttack(other);
-            if (!IsWeaponMaster) // 普通模式记录日志，大师模式不记以防刷屏
-                TerminalManagerForm.Instance.BroadcastToWorld(Name, $"🎯 锁定了远处的 {other.Name} 并发起了远程打击！", Color.Red);
-        }
-        else if (dist < 150 && FollowingTarget == null && ChaseTimer <= 0 && Rand.Next(500) < 5) // 较近：更激进地触发格斗或跟随
-        {
-            if (Rand.Next(2) == 0)
+            // --- 方案 B：偶数存活 - 允许近身捉对厮杀 ---
+            if (dist < 80)
             {
+                // 偶数时触发像素格斗，寻找对手进行对冲
                 StartDuel(other);
+                SocialCooldown = 100;
+                other.SocialCooldown = 100;
+                SetBark(aliveCount == 2 ? "这是最后的清算！💥" : "找到对手了，来格斗吧！", 80);
             }
             else
             {
-                FollowingTarget = other;
-                FollowTimer = Rand.Next(100, 300);
+                // 偶数人数时更有侵略性地发起追逐，模拟“捉对”
+                if (ChaseTimer <= 0 && FollowingTarget == null && Rand.Next(100) < 15)
+                {
+                    ChasingTarget = other;
+                    ChaseTimer = 350;
+                    SetBark($"锁定目标：{other.Name}！", 60);
+                }
+                
+                // 追的过程中该射也得射
+                if (dist > 150 && ShootCooldown == 0 && Rand.Next(100) < 15)
+                {
+                    LaunchRemoteAttack(other);
+                    SocialCooldown = 30;
+                }
             }
         }
     }
 
     private void LaunchRemoteAttack(Robot other)
     {
+        if (other == null || !other.IsActive || other.IsDead || IsDead) return;
+
         string[] attackBarks = { "看招！炸裂吧！💥", "吃我一记像素光波！⚡", "系统过载灌入！🔥", "目标锁定，发射！🎯", "吃我一记禁言锤！🔨", "像素风暴攻击！🌀" };
         SetBark(attackBarks[Rand.Next(attackBarks.Length)], 100);
         SpecialState = "ANGRY";
@@ -877,19 +1015,43 @@ public class Robot
         }
     }
 
-    public void ApplyAttackEffect()
+    public void ApplyAttackEffect(int damage = 5)
     {
+        if (IsDead) return;
+        HP = Math.Max(0, HP - damage);
+        
+        if (HP <= 0)
+        {
+            IsDead = true;
+            IsMoving = false;
+            RotationAngle = 90f; // 立即倒地
+            Dx = 0; Dy = 0;
+            SetBark("核心崩溃...系统下线 💀", 200);
+        }
+
+        LastDamageText = $"-{damage}";
+        DamageTextTimer = 45; // 约 0.7s
+        DamageFeedbackTimer = 60; // 红闪
+
         SpecialState = "SHAKING";
-        SpecialStateTimer = 120;
+        SpecialStateTimer = 60;
         string[] reactBarks = { "哎哟！谁偷袭我？！", "我的电路着火了！", "你会付出代价的！", "发生错误！痛死我了！", "嗷呜！" };
-        SetBark(reactBarks[Rand.Next(reactBarks.Length)], 120);
+        if (Rand.Next(100) < 30) SetBark(reactBarks[Rand.Next(reactBarks.Length)], 120);
     }
 
     public void HandleProjectileHit(Projectile p)
     {
         if (!IsActive) return;
         
-        ApplyAttackEffect();
+        // 根据伤害类型计算伤害
+        int baseDmg = p.Type switch {
+            "ROCKET" => 15,
+            "CANNON" => 25,
+            "LIGHTNING" => 10,
+            "PLASMA" => 20,
+            _ => 5
+        };
+        ApplyAttackEffect(baseDmg);
         
         // 根据子弹类型增加额外物理反馈
         switch(p.Type)

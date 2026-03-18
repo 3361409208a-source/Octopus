@@ -61,8 +61,8 @@ public class Projectile
 
     public void Update()
     {
-        // 锁定追踪逻辑
-        if (TrackingTarget != null && TrackingTarget.IsActive)
+        // 锁定追踪逻辑 (目标死亡或子弹生命垂危时停止追踪)
+        if (TrackingTarget != null && TrackingTarget.IsActive && !TrackingTarget.IsDead && LifeTime > 50)
         {
             float tx = TrackingTarget.X + TrackingTarget.Size / 2;
             float ty = TrackingTarget.Y + TrackingTarget.Size / 2;
@@ -77,6 +77,10 @@ public class Projectile
             float lerp = (Type == "ROCKET" || Type == "PLASMA") ? 0.15f : 0.08f;
             Dx = Dx * (1 - lerp) + targetDx * lerp;
             Dy = Dy * (1 - lerp) + targetDy * lerp;
+        }
+        else
+        {
+            TrackingTarget = null; // 失去锁定
         }
 
         X += Dx;
